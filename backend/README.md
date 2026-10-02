@@ -334,16 +334,19 @@ Start Docker Desktop or the Docker service.
 ## 15. Production architecture
 
 ```text
-Internet -> Caddy (HTTPS) -> Flutter web assets
-                         -> FastAPI API
-                            |        |
-                          MySQL    Redis
-                          persistent volume
+Internet / Flutter client -> Caddy (HTTPS) -> FastAPI API
+                                              |        |
+                                            MySQL    Redis
+                                            persistent volume
 ```
 
-The production Compose stack keeps MySQL, Redis, and the API off public host
-ports; only Caddy's 80/443 are published. MySQL data persists in a named Docker
-volume, so arrange and test off-server backups before storing important data.
+The production Compose stack deploys the FastAPI backend only. Caddy terminates
+HTTPS and forwards requests to FastAPI; no Flutter web build or static assets
+are deployed on this VPS. The Flutter app is a separate client and should be
+configured to call the public API URL. MySQL, Redis, and the API are kept off
+public host ports; only Caddy's 80/443 are published. MySQL data persists in a
+named Docker volume, so arrange and test off-server backups before storing
+important data.
 
 ## 16. Production deployment - Hostinger VPS
 
@@ -351,22 +354,60 @@ This requires a Hostinger VPS with Docker Compose, not shared hosting.
 Deployment files are `docker-compose.prod.yml`, `deploy/Caddyfile`, and
 `.env.production.example`.
 
-1. Point the domain's DNS A record to the VPS IPv4 address. Open inbound TCP
-   ports 80 and 443 (and SSH only from trusted sources) in the VPS firewall.
-   Do not open MySQL 3306, Redis 6379, or API 8000.
-2. Install Docker Engine and the Compose plugin using Docker's official Ubuntu
-   instructions. Use a non-root deployment account with access to Docker, and
-   clone this repository to a deployment directory.
-3. Configure Firebase as in section 12. From the repository root, build the
-   Flutter web app with the production origin:
+1. This deployment is configured for the Hostinger VPS hostname
+   `srv1518746.hstgr.cloud` (`76.13.182.87`). If using a custom domain instead,
+   point its DNS A record to that IPv4 address and replace the hostname in
+   `.env.production`, Firebase authorized domains, and the checks below.
+2. From Windows PowerShell, create an SSH key pair on your computer:
 
-   ```sh
-   flutter build web --release --dart-define=API_BASE_URL=https://app.example.com
+   ```powershell
+   ssh-keygen -t ed25519 -a 64 -f "$env:USERPROFILE\.ssh\id_ed25519_follo_cart" -C "follo-cart-deploy"
+   Get-Content "$env:USERPROFILE\.ssh\id_ed25519_follo_cart.pub"
    ```
 
-   Replace `app.example.com` with the actual domain. Caddy serves
-   `../build/web`, so deploy the generated directory with the backend source.
-4. In `backend/`, create the production environment file and install the
+   Add the displayed `.pub` public key in the VPS SSH-key settings in
+   Hostinger hPanel. Never upload or share `id_ed25519_follo_cart` (the file
+   without `.pub`); it is the private key. Use the SSH username shown in
+   Hostinger to connect:
+
+   ```powershell
+   ssh -i "$env:USERPROFILE\.ssh\id_ed25519_follo_cart" YOUR_VPS_USERNAME@srv1518746.hstgr.cloud
+   ```
+
+   Accept the host fingerprint only after comparing it with the fingerprint
+   shown in Hostinger. If SSH does not connect, confirm the public key is
+   installed and allow SSH from your current IP in the Hostinger firewall.
+3. In Hostinger's firewall, allow inbound TCP 80 and 443 and allow SSH (usually
+   TCP 22) only from trusted addresses where possible. Do not open MySQL 3306,
+   Redis 6379, or API 8000. If the VPS uses Ubuntu UFW, make sure SSH is
+   allowed before enabling the firewall, then run:
+
+   ```sh
+   sudo ufw allow OpenSSH
+   sudo ufw allow 80/tcp
+   sudo ufw allow 443/tcp
+   sudo ufw enable
+   sudo ufw status
+   ```
+
+   Keep the SSH session open while checking that a second connection works.
+   From Windows, check that public HTTP/HTTPS ports are reachable:
+
+   ```powershell
+   Test-NetConnection srv1518746.hstgr.cloud -Port 80
+   Test-NetConnection srv1518746.hstgr.cloud -Port 443
+   ```
+4. Install Docker Engine and the Compose plugin using Docker's official Ubuntu
+   instructions. Use a non-root deployment account with access to Docker, and
+   clone this repository to a deployment directory. Docker-group membership
+   grants root-equivalent control of the VPS; grant it only to trusted
+   deployment users.
+5. Configure Firebase as in section 12. Add
+   `srv1518746.hstgr.cloud` as an authorized domain in Firebase Console; the
+   browser-based admin login uses Firebase sign-in. No Flutter web build is
+   needed on the VPS. Configure any separately distributed Flutter client to
+   use `https://srv1518746.hstgr.cloud` as its API base URL.
+6. In `backend/`, create the production environment file and install the
    service-account file without committing either:
 
    ```sh
@@ -376,13 +417,16 @@ Deployment files are `docker-compose.prod.yml`, `deploy/Caddyfile`, and
    chmod 600 .env.production
    ```
 
-   Edit `.env.production`: set `DOMAIN`, unique long DB/root passwords, a
+   The API container runs as UID 10001; assigning the key to that UID with
+   mode 600 lets the service read it without making it world-readable. Edit
+   `.env.production`: set `DOMAIN`, unique long DB/root passwords (generate
+   each with `openssl rand -hex 32`), a
    cryptographically random `ADMIN_SESSION_SECRET` (for example,
    `openssl rand -hex 32`), Firebase project/web
    values, and the Firebase service-account file at
    `credentials/firebase-adminsdk.json`. Never paste secret values into chat
    or commit them.
-5. Apply the schema migration, then start the production stack:
+7. Apply the schema migration, then build and start the API and HTTPS proxy:
 
    ```sh
    docker compose --env-file .env.production -f docker-compose.prod.yml run --rm api alembic upgrade head
@@ -391,9 +435,10 @@ Deployment files are `docker-compose.prod.yml`, `deploy/Caddyfile`, and
    ```
 
    Caddy obtains HTTPS certificates after DNS resolves and ports 80/443 are
-   reachable. Check `https://app.example.com/api/v1/ready` and
-   `https://app.example.com/admin/login`.
-6. Bootstrap the first admin only after signing in to the Flutter app once
+   reachable. Check `https://srv1518746.hstgr.cloud/api/v1/ready` and
+   `https://srv1518746.hstgr.cloud/admin/login`. API documentation endpoints
+   are disabled in production.
+8. Bootstrap the first admin only after signing in to the Flutter app once
    with the verified Firebase account, which creates its MySQL user row. Find
    that account's Firebase UID in Firebase Console. On the server, connect
    from the Compose service. The `-p` option prompts for the MySQL root
@@ -417,9 +462,9 @@ Deployment files are `docker-compose.prod.yml`, `deploy/Caddyfile`, and
    rechecks the account's active admin role on each request.
 
 Never expose the Docker API, MySQL, or Redis ports to the internet. A VPS has
-not been provisioned by this workspace; deployment still requires the actual
-domain, Firebase project configuration, service-account key, and server
-access. Configure an independent backup destination and rehearse restore
+not been provisioned by this workspace; deployment still requires SSH access,
+Firebase project configuration, and the service-account key to be set up
+directly on the VPS. Configure an independent backup destination and rehearse restore
 before treating the service as production-ready.
 
 ## 17. Performance notes

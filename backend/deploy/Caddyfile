@@ -7,12 +7,5 @@
 		Permissions-Policy "geolocation=(self)"
 	}
 
-	@backend path /api/* /admin* /health /ready
-	reverse_proxy @backend api:8000
-
-	handle {
-		root * /srv
-		try_files {path} /index.html
-		file_server
-	}
+	reverse_proxy api:8000
 }

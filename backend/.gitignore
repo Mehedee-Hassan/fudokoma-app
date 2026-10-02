@@ -13,3 +13,4 @@ credentials/
 *firebase-adminsdk*.json
 .idea/
 *.swp
+.env.production
