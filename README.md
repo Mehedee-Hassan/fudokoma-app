@@ -11,7 +11,7 @@ flutter run -d chrome
 
 
 
-The app opens with a map-first Explore screen. It requests the user's location, centers the map when permission is granted, and draws a 5 km radius around the user. If location access is unavailable, the app shows the demo area and provides a retry action.
+The app opens with a map-first Explore screen. It requests the user's location and centers the map when permission is granted. If location access is unavailable, the app shows the demo area and provides a retry action.
 
 <img width="504" height="934" alt="Screenshot from 2026-09-12 02-08-38" src="https://github.com/user-attachments/assets/a34decef-6273-4e09-bb10-bd0a40b64301" />
 
@@ -39,6 +39,11 @@ To save another cart from Flutter, open **Profile → Cart owner → Manage my
 cart → Add a food cart**. Enter the cart details and coordinates, then select
 **Save cart**. The map refreshes to the newly saved location. The local owner
 prototype account is created automatically if it does not already exist.
+
+The local web admin dashboard is available at
+`http://localhost:18000/admin`. It lists users and saved cart locations and
+lets you block or unblock prototype users. It has no sign-in and is disabled
+when `APP_ENV=production`; do not expose it publicly.
 
 For a physical device, set `API_BIND_ADDRESS` to `0.0.0.0` in the backend's
 local `.env`, replace `localhost` in `API_BASE_URL` with your development

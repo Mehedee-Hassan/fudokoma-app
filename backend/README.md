@@ -4,7 +4,7 @@
 
 This Python backend serves the Flutter application. The initial foundation implements configuration, asynchronous MySQL persistence, migrations, Redis connectivity, health/readiness, Docker development, and tests. The current local integration adds cart/user/follow/notification REST endpoints for the Flutter prototype.
 
-**Production authentication and authorization are pending:** these prototype endpoints do not verify Firebase tokens, and must not be exposed in production. Nearby SQL searches, notification creation/delivery, the Jinja dashboard and secure sessions/CSRF, production Compose/Caddy, and Hostinger deployment also remain future work.
+**Production authentication and authorization are pending:** these prototype endpoints and `/admin` do not verify Firebase tokens, and must not be exposed in production. Nearby SQL searches, notification creation/delivery, secure admin sessions/CSRF, production Compose/Caddy, and Hostinger deployment also remain future work.
 
 Stack: Python 3.12+, FastAPI, SQLAlchemy 2.x, asyncmy, MySQL 8.4, Alembic, Pydantic v2/pydantic-settings, Redis, pytest, Docker. Firebase Admin, Jinja2 and form/session dependencies are included for subsequent phases.
 
@@ -205,7 +205,7 @@ Reload is development-only. The Docker API is reachable at port 18000 by default
 | http://127.0.0.1:18000/redoc | ReDoc |
 | http://127.0.0.1:18000/api/v1/health | Liveness: {"status":"ok"} |
 | http://127.0.0.1:18000/api/v1/ready | Startup + SELECT 1; 503 if MySQL unavailable |
-| http://127.0.0.1:18000/admin | Future dashboard; currently 404 |
+| http://127.0.0.1:18000/admin | Local prototype admin dashboard; disabled in production |
 | http://127.0.0.1:18000/api/v1/carts | Local prototype carts |
 | http://127.0.0.1:18000/api/v1/users | Local prototype users |
 

@@ -9,6 +9,7 @@ from app.db.session import create_database
 from app.api.routes.health import router
 from app.api.routes.carts import router as carts_router
 from app.api.routes.users import router as users_router
+from app.admin.routes import router as admin_router
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
@@ -51,6 +52,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     application.include_router(router, prefix=settings.api_v1_prefix)
     application.include_router(carts_router, prefix=settings.api_v1_prefix)
     application.include_router(users_router, prefix=settings.api_v1_prefix)
+    application.include_router(admin_router)
     return application
 
 

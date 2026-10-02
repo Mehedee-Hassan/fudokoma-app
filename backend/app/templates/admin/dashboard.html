@@ -1,0 +1,106 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Fudo Koma · Admin dashboard</title>
+    <style>
+      :root { color-scheme: light; --ink: #18332b; --muted: #66756f; --green: #176b5b; --line: #e3e9e5; --surface: #fff; --canvas: #f5f7f4; }
+      * { box-sizing: border-box; }
+      body { margin: 0; background: var(--canvas); color: var(--ink); font: 15px/1.5 system-ui, sans-serif; }
+      header { display: flex; justify-content: space-between; align-items: center; gap: 20px; padding: 22px max(24px, calc((100% - 1120px) / 2)); background: var(--surface); border-bottom: 1px solid var(--line); }
+      header strong { font-size: 19px; }
+      header span { color: var(--muted); font-size: 13px; }
+      main { max-width: 1120px; margin: 0 auto; padding: 36px 24px 56px; }
+      h1 { margin: 0; font-size: clamp(28px, 4vw, 38px); letter-spacing: -1px; }
+      h2 { margin: 0 0 16px; font-size: 19px; }
+      .intro { margin: 8px 0 26px; color: var(--muted); }
+      .notice { margin-bottom: 22px; padding: 12px 15px; border: 1px solid #efd59b; border-radius: 12px; background: #fff8e7; color: #70520a; }
+      .stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; margin-bottom: 24px; }
+      .stat, .panel { border: 1px solid var(--line); border-radius: 16px; background: var(--surface); }
+      .stat { padding: 18px; }
+      .stat span { display: block; color: var(--muted); font-size: 13px; }
+      .stat strong { display: block; margin-top: 4px; font-size: 28px; }
+      .panel { margin-top: 18px; padding: 20px; }
+      .table-wrap { overflow-x: auto; }
+      table { width: 100%; border-collapse: collapse; text-align: left; }
+      th, td { padding: 12px 10px; border-bottom: 1px solid var(--line); vertical-align: middle; }
+      th { color: var(--muted); font-size: 12px; font-weight: 650; text-transform: uppercase; letter-spacing: .04em; }
+      tr:last-child td { border-bottom: 0; }
+      .secondary { color: var(--muted); font-size: 13px; }
+      .badge { display: inline-block; padding: 3px 9px; border-radius: 20px; background: #e8f3ed; color: var(--green); font-size: 12px; font-weight: 650; }
+      .badge.blocked { background: #fce9e7; color: #a5352c; }
+      button { border: 1px solid var(--line); border-radius: 9px; padding: 7px 11px; background: white; color: var(--ink); font: inherit; cursor: pointer; }
+      button:hover { border-color: var(--green); color: var(--green); }
+      .empty { padding: 20px 8px; color: var(--muted); text-align: center; }
+      @media (max-width: 640px) { header { align-items: flex-start; flex-direction: column; } main { padding: 25px 16px 40px; } .stats { gap: 8px; } .stat { padding: 13px; } .stat strong { font-size: 23px; } .panel { padding: 15px 12px; } }
+    </style>
+  </head>
+  <body>
+    <header>
+      <strong>Fudo Koma <span>Admin</span></strong>
+      <span>Local development dashboard</span>
+    </header>
+    <main>
+      <h1>Admin dashboard</h1>
+      <p class="intro">Review prototype accounts and food cart locations.</p>
+      <div class="notice"><strong>Development only:</strong> this dashboard has no sign-in and is available only when the backend is not in production. Do not expose it publicly.</div>
+
+      <section class="stats" aria-label="Platform summary">
+        <div class="stat"><span>Total users</span><strong>{{ user_count }}</strong></div>
+        <div class="stat"><span>Food carts</span><strong>{{ cart_count }}</strong></div>
+        <div class="stat"><span>Blocked users</span><strong>{{ blocked_count }}</strong></div>
+      </section>
+
+      <section class="panel">
+        <h2>Users</h2>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Name</th><th>Email</th><th>Role</th><th>Status</th><th>Joined</th><th>Action</th></tr></thead>
+            <tbody>
+              {% for user in users %}
+              <tr>
+                <td>{{ user.name }}<div class="secondary">{{ user.firebase_uid }}</div></td>
+                <td>{{ user.email or "—" }}</td>
+                <td>{{ user.role }}</td>
+                <td><span class="badge{% if user.is_blocked %} blocked{% endif %}">{{ "Blocked" if user.is_blocked else "Active" }}</span></td>
+                <td>{{ user.created_at.strftime("%Y-%m-%d") }}</td>
+                <td>
+                  <form method="post" action="/admin/users/{{ user.id }}/block?blocked={{ 'false' if user.is_blocked else 'true' }}">
+                    <button type="submit">{{ "Unblock" if user.is_blocked else "Block" }}</button>
+                  </form>
+                </td>
+              </tr>
+              {% else %}
+              <tr><td class="empty" colspan="6">No users yet.</td></tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="panel">
+        <h2>Food carts</h2>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Cart</th><th>Category</th><th>Owner ID</th><th>Status</th><th>Location</th><th>Schedule</th></tr></thead>
+            <tbody>
+              {% for cart in carts %}
+              <tr>
+                <td>{{ cart.name }}<div class="secondary">{{ cart.description }}</div></td>
+                <td>{{ cart.category }}</td>
+                <td class="secondary">{{ cart.owner_id }}</td>
+                <td><span class="badge">{{ "Open" if cart.is_open else "Closed" }}</span></td>
+                <td>{{ "%.4f"|format(cart.latitude) }}, {{ "%.4f"|format(cart.longitude) }}</td>
+                <td>{{ cart.schedule }}</td>
+              </tr>
+              {% else %}
+              <tr><td class="empty" colspan="6">No carts yet.</td></tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </section>
+    </main>
+  </body>
+</html>
