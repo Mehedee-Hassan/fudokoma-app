@@ -1,0 +1,18 @@
+{$DOMAIN} {
+	encode zstd gzip
+
+	header {
+		X-Content-Type-Options nosniff
+		Referrer-Policy strict-origin-when-cross-origin
+		Permissions-Policy "geolocation=(self)"
+	}
+
+	@backend path /api/* /admin* /health /ready
+	reverse_proxy @backend api:8000
+
+	handle {
+		root * /srv
+		try_files {path} /index.html
+		file_server
+	}
+}

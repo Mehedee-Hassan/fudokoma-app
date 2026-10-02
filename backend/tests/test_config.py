@@ -18,6 +18,33 @@ def test_empty_admin_password_disables_dashboard_login():
     assert settings.admin_password is None
 
 
+def test_production_configuration_requires_firebase_credentials():
+    with pytest.raises(ValidationError, match="FIREBASE_PROJECT_ID"):
+        Settings(
+            _env_file=None,
+            app_env="production",
+            admin_session_secret="s" * 40,
+            mysql_password="test",
+            trusted_hosts=["testserver"],
+        )
+
+
+def test_production_rejects_example_placeholders():
+    with pytest.raises(ValidationError, match="placeholder"):
+        Settings(
+            _env_file=None,
+            app_env="production",
+            admin_session_secret="REPLACE_WITH_AT_LEAST_32_RANDOM_CHARACTERS",
+            mysql_password="database-password",
+            firebase_project_id="project-id",
+            firebase_credentials_path="/run/secrets/firebase.json",
+            firebase_web_api_key="api-key",
+            firebase_auth_domain="project.firebaseapp.com",
+            firebase_web_app_id="app-id",
+            trusted_hosts=["app.example.com"],
+        )
+
+
 @pytest.mark.parametrize("changes", [
     {"debug": True}, {"admin_session_secret": ""},
     {"trusted_hosts": ["*"]}, {"cors_origins": ["*"]},

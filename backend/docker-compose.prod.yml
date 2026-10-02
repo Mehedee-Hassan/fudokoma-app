@@ -1,0 +1,129 @@
+name: follo-cart-production
+
+services:
+  mysql:
+    image: mysql:8.4
+    restart: unless-stopped
+    environment:
+      MYSQL_DATABASE: ${MYSQL_DATABASE:?Set MYSQL_DATABASE in .env.production}
+      MYSQL_USER: ${MYSQL_USER:?Set MYSQL_USER in .env.production}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:?Set MYSQL_PASSWORD in .env.production}
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?Set MYSQL_ROOT_PASSWORD in .env.production}
+    volumes:
+      - mysql_data:/var/lib/mysql
+    networks:
+      - database
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - MYSQL_PWD=$$MYSQL_PASSWORD mysql --user=$$MYSQL_USER --database=$$MYSQL_DATABASE --execute='SELECT 1'
+      interval: 10s
+      timeout: 5s
+      retries: 15
+      start_period: 30s
+    logging:
+      options:
+        max-size: "10m"
+        max-file: "5"
+
+  redis:
+    image: redis:7.4-alpine
+    restart: unless-stopped
+    networks:
+      - database
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    logging:
+      options:
+        max-size: "10m"
+        max-file: "5"
+
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    environment:
+      APP_ENV: production
+      APP_NAME: Follo Cart API
+      DEBUG: "false"
+      API_V1_PREFIX: /api/v1
+      MYSQL_HOST: mysql
+      MYSQL_PORT: "3306"
+      MYSQL_DATABASE: ${MYSQL_DATABASE:?Set MYSQL_DATABASE in .env.production}
+      MYSQL_USER: ${MYSQL_USER:?Set MYSQL_USER in .env.production}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:?Set MYSQL_PASSWORD in .env.production}
+      DB_POOL_SIZE: ${DB_POOL_SIZE:-10}
+      DB_MAX_OVERFLOW: ${DB_MAX_OVERFLOW:-10}
+      DATABASE_URL: ""
+      REDIS_URL: redis://redis:6379/0
+      FIREBASE_PROJECT_ID: ${FIREBASE_PROJECT_ID:?Set Firebase settings in .env.production}
+      FIREBASE_CREDENTIALS_PATH: /run/secrets/firebase-adminsdk.json
+      FIREBASE_WEB_API_KEY: ${FIREBASE_WEB_API_KEY:?Set Firebase web settings in .env.production}
+      FIREBASE_AUTH_DOMAIN: ${FIREBASE_AUTH_DOMAIN:?Set Firebase web settings in .env.production}
+      FIREBASE_WEB_APP_ID: ${FIREBASE_WEB_APP_ID:?Set Firebase web settings in .env.production}
+      ADMIN_SESSION_SECRET: ${ADMIN_SESSION_SECRET:?Set ADMIN_SESSION_SECRET in .env.production}
+      CORS_ORIGINS: "[]"
+      TRUSTED_HOSTS: '["${DOMAIN:?Set DOMAIN in .env.production}","127.0.0.1","localhost"]'
+      DOCS_ENABLED: "false"
+    volumes:
+      - ./credentials/firebase-adminsdk.json:/run/secrets/firebase-adminsdk.json:ro
+    networks:
+      - database
+      - frontend
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/v1/ready', timeout=5)
+      interval: 15s
+      timeout: 6s
+      retries: 5
+      start_period: 30s
+    logging:
+      options:
+        max-size: "10m"
+        max-file: "5"
+
+  web:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    environment:
+      DOMAIN: ${DOMAIN:?Set DOMAIN in .env.production}
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - ../build/web:/srv:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    networks:
+      - frontend
+    depends_on:
+      api:
+        condition: service_healthy
+    logging:
+      options:
+        max-size: "10m"
+        max-file: "5"
+
+networks:
+  database:
+    internal: true
+  frontend:
+
+volumes:
+  mysql_data:
+  caddy_data:
+  caddy_config:

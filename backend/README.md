@@ -1,29 +1,29 @@
-# Fudo Koma backend — Phase 1
+# Fudo Koma backend - Phase 1
 
 ## 1. Overview and scope
 
 This Python backend serves the Flutter application. The initial foundation implements configuration, asynchronous MySQL persistence, migrations, Redis connectivity, health/readiness, Docker development, and tests. The current local integration adds cart/user/follow/notification REST endpoints for the Flutter prototype.
 
-**Production API authentication and authorization are pending:** the prototype API endpoints do not verify Firebase tokens. The `/admin` dashboard has a separate environment-configured login for local development only and is disabled in production. Do not expose either surface publicly. Nearby SQL searches, production Compose/Caddy, and Hostinger deployment also remain future work.
+Firebase ID tokens are verified by the API. Account identity is provisioned from verified token claims, and user, cart-owner, and admin operations are authorization-checked against MySQL roles and ownership. The admin web dashboard accepts only verified Firebase accounts with an active `admin` database role. Public deployment still requires real Firebase settings, a domain, a Firebase service-account file, and a bootstrapped admin account.
 
 Stack: Python 3.12+, FastAPI, SQLAlchemy 2.x, asyncmy, MySQL 8.4, Alembic, Pydantic v2/pydantic-settings, Redis, pytest, Docker. Firebase Admin, Jinja2 and form/session dependencies are included for subsequent phases.
 
 ```text
-Flutter application --- REST API (local prototype)
+Flutter application --- Firebase Authentication --- REST API
         |
         v
-FastAPI REST API -------- Jinja admin dashboard (local development)
+FastAPI REST API -------- Jinja admin dashboard
         |
     +---+---+
     |       |
   MySQL   Redis
 ```
 
-Flutter now loads carts, registers a fixed local prototype user, and persists follow/status/moderation changes through this API. Endpoints include `GET/POST /api/v1/carts`, `PATCH /api/v1/carts/{id}`, user create/list/update, follows, and notifications. Cart follower counts and follow state are query-derived. The app configures the API using `--dart-define=API_BASE_URL=...`; Android emulators use `http://10.0.2.2:18000`. Flutter models use camelCase while the API/database use snake_case. Location labels and featured state are not stored, and server-generated UUIDs replace the old demo IDs. Firebase UID remains separate from the local UUID.
+Flutter supports Firebase email/password and Google sign-in. ID tokens accompany protected API calls. New users are created as customers; role changes are restricted to admins. Carts can be read publicly, while create/update, account, follows, notifications, and moderation routes enforce authenticated identity, database role, or cart ownership. The app configures the API using `--dart-define=API_BASE_URL=...`; Android emulators use `http://10.0.2.2:18000`. Flutter models use camelCase while the API/database use snake_case. Location labels and featured state are not stored, and server-generated UUIDs replace the old demo IDs.
 
 ## 2. Prerequisites
 
-Install Git, Python 3.12 or newer, VS Code with the Python extension, and Docker with Compose v2 (Docker Desktop on Windows). A MySQL client is optional. Firebase project setup is required in Phase 2.
+Install Git, Python 3.12 or newer, VS Code with the Python extension, and Docker with Compose v2 (Docker Desktop on Windows). A MySQL client is optional. Firebase Auth is required for sign-in and protected API operations.
 
 ```sh
 python --version
@@ -45,7 +45,7 @@ cd backend
 
 All following commands run from backend/, unless stated otherwise.
 
-## 4. Python virtual environment — Mode A
+## 4. Python virtual environment - Mode A
 
 Linux/macOS:
 ```sh
@@ -109,25 +109,29 @@ Edit .env. Example passwords are development-only placeholders; replace them. .e
 | API_BIND_ADDRESS | Docker API bind address, defaults to loopback; use 0.0.0.0 only for a trusted physical-device test network |
 | API_PORT | Optional Docker API host port, defaults to 18000; internal port stays 8000 |
 | REDIS_PORT | Optional host Redis port, defaults to 6379; no effect on internal port |
-| FIREBASE_PROJECT_ID | Firebase project, reserved for Phase 2 |
-| FIREBASE_CREDENTIALS_PATH | Service-account file path, reserved for Phase 2 |
-| ADMIN_SESSION_SECRET | Signs the admin session cookie; use a random value of at least 32 characters |
-| ADMIN_USERNAME | Username for the local web admin dashboard; leave unset to disable login |
-| ADMIN_PASSWORD | Password for the local web admin dashboard; leave unset to disable login |
+| FIREBASE_PROJECT_ID | Firebase project ID used to verify ID tokens |
+| FIREBASE_CREDENTIALS_PATH | Firebase Admin service-account JSON file path |
+| FIREBASE_WEB_API_KEY | Public Firebase web app API key used by web admin sign-in |
+| FIREBASE_AUTH_DOMAIN | Firebase Auth domain used by the web admin sign-in |
+| FIREBASE_WEB_APP_ID | Firebase web app ID used by the web admin sign-in |
+| ADMIN_SESSION_SECRET | Signs admin session cookies; use a random value of at least 32 characters |
+| ADMIN_USERNAME | Optional local-development-only dashboard username |
+| ADMIN_PASSWORD | Optional local-development-only dashboard password |
 | CORS_ORIGINS | JSON array of permitted browser origins including scheme/port; no wildcard in production |
 | TRUSTED_HOSTS | JSON array of allowed hostnames; no wildcard/empty list in production |
 | DOCS_ENABLED | Enables /docs, /redoc and /openapi.json; consider false in production |
 
 Settings load .env relative to the working directory. Use backend/ as the working directory. Never put passwords in source code. Separate DB fields safely handle special characters without manual URL construction.
 
-To enable the local dashboard login, set `ADMIN_USERNAME` and `ADMIN_PASSWORD`
-in `.env`, and generate a unique `ADMIN_SESSION_SECRET` of at least 32
-characters (for example, `python -c "import secrets; print(secrets.token_urlsafe(48))"`).
-Restart the API after changing these values. Open
-`http://localhost:18000/admin`; sign-in sessions expire after eight hours.
-The dashboard is disabled in production and must not be exposed publicly.
+To enable local Firebase auth, create a Firebase project and configure the web
+and Flutter apps as described in section 12. Set the Firebase project ID and
+service-account path in `.env`. For the optional local-only shared dashboard
+login, set `ADMIN_USERNAME` and `ADMIN_PASSWORD` and generate a unique
+`ADMIN_SESSION_SECRET` of at least 32 characters (for example,
+`python -c "import secrets; print(secrets.token_urlsafe(48))"`). The public
+dashboard uses Firebase sign-in and database admin roles.
 
-## 7. Start MySQL and Redis — Mode A
+## 7. Start MySQL and Redis - Mode A
 
 ```sh
 docker compose up -d mysql redis
@@ -198,7 +202,7 @@ Tables: users, carts, follows, notifications, reports. Foreign keys prevent orph
 
 **Nearby search remains future work:** use latitude/longitude with an indexed SQL bounding box, followed by database-side ST_Distance_Sphere(POINT(longitude, latitude), POINT(:lng, :lat)). A dedicated POINT column is deferred to avoid duplicated-coordinate synchronization and SRID migration complexity. Never fetch all carts for Python distance calculations. Handle the antimeridian/poles explicitly, validate inputs, cap radius/limit, and inspect EXPLAIN against representative data.
 
-## 10. Run FastAPI locally — Mode A
+## 10. Run FastAPI locally - Mode A
 
 After migrations:
 ```sh
@@ -214,15 +218,19 @@ Reload is development-only. The Docker API is reachable at port 18000 by default
 | http://127.0.0.1:18000/redoc | ReDoc |
 | http://127.0.0.1:18000/api/v1/health | Liveness: {"status":"ok"} |
 | http://127.0.0.1:18000/api/v1/ready | Startup + SELECT 1; 503 if MySQL unavailable |
-| http://127.0.0.1:18000/admin | Local admin dashboard; requires configured login and is disabled in production |
-| http://127.0.0.1:18000/api/v1/carts | Local prototype carts |
-| http://127.0.0.1:18000/api/v1/users | Local prototype users |
+| http://127.0.0.1:18000/admin | Admin dashboard; Firebase login requires an active admin role |
+| http://127.0.0.1:18000/api/v1/carts | Public cart list; mutations require a cart-owner/admin token |
+| http://127.0.0.1:18000/api/v1/users/me | Authenticated current-user profile |
 
 Readiness reports Redis separately and remains 200 when only Redis fails. Dependency probes run concurrently with bounded timeouts. Error responses do not reveal credentials. Readiness checks connectivity, not migration version; verify alembic current/check during deployment.
 
-All cart/user prototype endpoints return 403 when `APP_ENV=production`. They have no authentication in development: do not publish or port-forward a development instance. Flutter integration steps and emulator configuration are also documented in the repository [README](../README.md#connect-flutter-to-the-local-backend).
+Private user, follow, notification, and cart mutation operations require a
+verified Firebase ID token. Role and ownership checks are enforced server-side.
+Configure Firebase before using authenticated workflows. Flutter integration
+steps and emulator configuration are documented in the repository
+[README](../README.md#connect-flutter-to-the-local-backend).
 
-## 11. Run everything in Docker — Mode B
+## 11. Run everything in Docker - Mode B
 
 ```sh
 docker compose up --build
@@ -237,15 +245,27 @@ docker compose restart api
 docker compose down
 ```
 
-For detached mode: docker compose up -d --build. The API waits for healthy DB/Redis. No Firebase setup is needed for Phase 1. The Dockerfile uses Python 3.12-slim and UID 10001. It caches dependency installation before copying source.
+For detached mode: docker compose up -d --build. The API waits for healthy DB/Redis. Authenticated API workflows also need Firebase configuration and an Admin SDK credentials file. The Dockerfile uses Python 3.12-slim and UID 10001. It caches dependency installation before copying source.
 
-The Dockerfile default runs Uvicorn with two workers and no reload. Development Compose overrides it with reload. Direct Uvicorn supports worker supervision; this follows [FastAPI deployment guidance](https://fastapi.tiangolo.com/deployment/server-workers/) and avoids obsolete uvicorn.workers/Gunicorn recipes. Each worker owns a DB pool: budget (pool size + overflow) × workers × replicas, leaving MySQL capacity for migrations and administration. Production Compose/HTTPS is still Phase 5; the Dockerfile alone is not a production deployment.
+The Dockerfile default runs Uvicorn with two workers and no reload. Development Compose overrides it with reload. Direct Uvicorn supports worker supervision; this follows [FastAPI deployment guidance](https://fastapi.tiangolo.com/deployment/server-workers/) and avoids obsolete uvicorn.workers/Gunicorn recipes. Each worker owns a DB pool: budget (pool size + overflow) * workers * replicas, leaving MySQL capacity for migrations and administration. Use the separate production Compose file and Caddy configuration below for VPS hosting.
 
-## 12. Firebase setup — preparation for Phase 2
+## 12. Firebase setup
 
-Create a Firebase project and use Firebase Console project settings/service accounts to generate a service-account JSON. Store it outside the repository (or in ignored backend/credentials/ locally). Set FIREBASE_PROJECT_ID and FIREBASE_CREDENTIALS_PATH to the correct path. For Docker, Phase 2 must add a read-only secret mount and use its container path.
+1. Create a Firebase project and register the Flutter platforms and a Firebase
+   web app. Run `flutterfire configure`; do not build a release while the
+   placeholder values remain in `lib/firebase_options.dart`.
+2. Enable **Email/Password** and **Google** under Firebase Authentication.
+   Add the deployment domain to Firebase Authentication's authorized domains.
+3. Create a Firebase Admin service-account key for backend token verification.
+   Store it outside version control; for local Docker, place it at
+   `backend/credentials/firebase-adminsdk.json` and set
+   `FIREBASE_CREDENTIALS_PATH=/run/secrets/firebase-adminsdk.json`.
+4. Set `FIREBASE_PROJECT_ID`. For web dashboard sign-in, also set
+   `FIREBASE_WEB_API_KEY`, `FIREBASE_AUTH_DOMAIN`, and `FIREBASE_WEB_APP_ID`
+   from the registered web app. These are client configuration values, not
+   service-account secrets.
 
-**NEVER commit Firebase service-account credentials.** Client firebase_options.dart is not an Admin SDK credential. Flutter will send Authorization: Bearer <firebase_id_token>; the server must verify it with Firebase Admin and load role/block state from MySQL. No verification, auth bypass, role promotion or authenticated endpoint exists in Phase 1.
+Never commit Firebase service-account credentials. Flutter ID tokens are verified by Firebase Admin; role and account-block status are read from MySQL. New accounts are created as customers. Admins promote accounts to cart-owner or admin roles from authenticated admin tools.
 
 ## 13. Tests
 
@@ -260,7 +280,9 @@ Mode B:
 docker compose run --rm api pytest -v
 ```
 
-Tests cover liveness, readiness success/failure, optional Redis, startup requirement, trusted hosts, URL handling and production configuration guards. Dependency probes are mocked; no real Firebase/MySQL/Redis credentials are required for unit tests. Integration verification uses real Docker MySQL and Redis separately. Owner/pagination/cart-schema authorization tests arrive with their implementations.
+Tests cover liveness/readiness, production configuration, admin sessions,
+CSRF, authentication gates, and role checks. Firebase token verification is
+mocked in tests; no real service-account key is needed for the test suite.
 
 ## 14. Common local problems
 
@@ -294,7 +316,9 @@ docker compose logs --tail=100 redis
 
 **Missing package:** activate the correct interpreter and python -m pip install -r requirements.txt. Diagnose with python -m pip show fastapi sqlalchemy asyncmy.
 
-**Firebase credentials missing:** expected in Phase 1; future auth must fail explicitly rather than fake verification.
+**Firebase credentials missing:** health and public cart reads can run, but
+sign-in and protected endpoints require a configured Firebase project and
+Admin SDK credentials file. Do not bypass token verification.
 
 **Docker daemon not running:**
 ```sh
@@ -307,25 +331,96 @@ Start Docker Desktop or the Docker service.
 
 **Windows activation restrictions:** use CMD activation or, where organizational policy permits, Set-ExecutionPolicy -Scope Process -ExecutionPolicy RemoteSigned. Process scope ends with the terminal. You can also invoke .venv\Scripts\python.exe directly.
 
-## 15. Production architecture — planned
+## 15. Production architecture
 
 ```text
-Internet -> HTTPS reverse proxy -> stateless FastAPI containers
-                                  |                 |
-                                MySQL             Redis
-                                  |
-                          persistent volume/backups
+Internet -> Caddy (HTTPS) -> Flutter web assets
+                         -> FastAPI API
+                            |        |
+                          MySQL    Redis
+                          persistent volume
 ```
 
-Keep API containers replaceable. MySQL data needs backups independent of container images. A future Caddy service will reverse_proxy api:8000 on the internal Compose network; publicly expose only 80/443. Never publicly expose MySQL, Redis or API 8000.
+The production Compose stack keeps MySQL, Redis, and the API off public host
+ports; only Caddy's 80/443 are published. MySQL data persists in a named Docker
+volume, so arrange and test off-server backups before storing important data.
 
-## 16. Deploy to Hostinger VPS — Phase 5 pending
+## 16. Production deployment - Hostinger VPS
 
-This project requires a VPS, not shared hosting. The complete executable deployment guide, production Compose, Caddyfile, migration workflow, backups/restore and rollback procedures will be added in Phase 5. This section records requirements without pretending missing files are usable.
+This requires a Hostinger VPS with Docker Compose, not shared hosting.
+Deployment files are `docker-compose.prod.yml`, `deploy/Caddyfile`, and
+`.env.production.example`.
 
-Method A: use a Hostinger Ubuntu Docker VPS template where available; verify Docker/Compose and optionally use Docker Manager. Method B: SSH into an Ubuntu VPS, install Docker using its official Ubuntu instructions, create a non-root deployment user and deploy Compose from /opt/fudo-koma/backend. UI availability must be verified against current Hostinger documentation during Phase 5.
+1. Point the domain's DNS A record to the VPS IPv4 address. Open inbound TCP
+   ports 80 and 443 (and SSH only from trusted sources) in the VPS firewall.
+   Do not open MySQL 3306, Redis 6379, or API 8000.
+2. Install Docker Engine and the Compose plugin using Docker's official Ubuntu
+   instructions. Use a non-root deployment account with access to Docker, and
+   clone this repository to a deployment directory.
+3. Configure Firebase as in section 12. From the repository root, build the
+   Flutter web app with the production origin:
 
-Production preparation: domain A record to VPS IP, SSH keys, strong DB/session secrets, Firebase service-account secret outside Git, explicit CORS/trusted hosts, off-server backups, HTTPS reverse proxy and firewall. No live Hostinger server has been configured by this implementation.
+   ```sh
+   flutter build web --release --dart-define=API_BASE_URL=https://app.example.com
+   ```
+
+   Replace `app.example.com` with the actual domain. Caddy serves
+   `../build/web`, so deploy the generated directory with the backend source.
+4. In `backend/`, create the production environment file and install the
+   service-account file without committing either:
+
+   ```sh
+   cp .env.production.example .env.production
+   mkdir -p credentials
+   sudo install -o 10001 -g 10001 -m 600 /secure/path/firebase-adminsdk.json credentials/firebase-adminsdk.json
+   chmod 600 .env.production
+   ```
+
+   Edit `.env.production`: set `DOMAIN`, unique long DB/root passwords, a
+   cryptographically random `ADMIN_SESSION_SECRET` (for example,
+   `openssl rand -hex 32`), Firebase project/web
+   values, and the Firebase service-account file at
+   `credentials/firebase-adminsdk.json`. Never paste secret values into chat
+   or commit them.
+5. Apply the schema migration, then start the production stack:
+
+   ```sh
+   docker compose --env-file .env.production -f docker-compose.prod.yml run --rm api alembic upgrade head
+   docker compose --env-file .env.production -f docker-compose.prod.yml up -d --build
+   docker compose --env-file .env.production -f docker-compose.prod.yml ps
+   ```
+
+   Caddy obtains HTTPS certificates after DNS resolves and ports 80/443 are
+   reachable. Check `https://app.example.com/api/v1/ready` and
+   `https://app.example.com/admin/login`.
+6. Bootstrap the first admin only after signing in to the Flutter app once
+   with the verified Firebase account, which creates its MySQL user row. Find
+   that account's Firebase UID in Firebase Console. On the server, connect
+   from the Compose service. The `-p` option prompts for the MySQL root
+   password without putting it in shell history:
+
+   ```sh
+   docker compose --env-file .env.production -f docker-compose.prod.yml exec mysql mysql -u root -p
+   ```
+
+   Select the configured database, then promote only that intended UID:
+
+   ```sql
+   USE follo_cart;
+   UPDATE users SET role = 'admin'
+   WHERE firebase_uid = 'THE_INTENDED_FIREBASE_UID';
+   SELECT ROW_COUNT();
+   ```
+
+   Verify exactly one row was changed. Afterwards, sign into `/admin` with
+   that verified Firebase email/password or Google account. The dashboard
+   rechecks the account's active admin role on each request.
+
+Never expose the Docker API, MySQL, or Redis ports to the internet. A VPS has
+not been provisioned by this workspace; deployment still requires the actual
+domain, Firebase project configuration, service-account key, and server
+access. Configure an independent backup destination and rehearse restore
+before treating the service as production-ready.
 
 ## 17. Performance notes
 
@@ -343,7 +438,7 @@ Approximately 1,000 requests/second requires measured capacity, indexed queries,
 
 Move MySQL to a separate database server when operational needs justify it. Shared secure sessions, consistent secrets, migrations run once per deployment, metrics and distributed rate limits are prerequisites before replicas. No microservices/Kubernetes are needed.
 
-## 19. Optional GitHub Actions deployment — planned
+## 19. Optional GitHub Actions deployment - planned
 
 Tests must pass before deployment. A future workflow may deploy a protected release branch over SSH or a verified Hostinger-supported integration. Store SSH/Hostinger credentials or API keys (only if that integration requires them), repository authentication and production environment secrets in GitHub Actions Secrets; never workflow YAML. Private repos should use scoped deploy keys. Automatic production deployment is not enabled.
 
