@@ -1,0 +1,18 @@
+{
+  "project_id": "YOUR_FIREBASE_PROJECT_ID",
+  "storage_bucket": "YOUR_STORAGE_BUCKET",
+  "firebase_auth": {
+    "enabled": true,
+    "providers": [
+      "email",
+      "google"
+    ]
+  },
+  "firestore": {
+    "database": "(default)"
+  },
+  "messaging": {
+    "enabled": true
+  },
+  "notes": "Replace all placeholder values with your real Firebase project values."
+}

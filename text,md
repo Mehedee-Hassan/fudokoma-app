@@ -1,0 +1,16 @@
+Current limitations
+
+The map is a custom visual demo, not a real GPS map.
+Cart locations are sample data and do not update live.
+Follow state exists only while the app is running.
+No login, registration, or real user accounts.
+Customer, owner, and admin roles are only UI previews.
+Cart owners cannot yet upload photos or publish real schedules.
+No backend database.
+No push notifications.
+No actual 3 km geofence alerts.
+Admin cannot really block or manage users.
+No real location permissions or background tracking.
+iOS scaffolding exists, but iOS build testing requires macOS/Xcode.
+So this is a functional front-end demo, not yet a production-ready app. The next major step is adding a backend, authentication, real maps/GPS, photo storage, and push notifications.
+

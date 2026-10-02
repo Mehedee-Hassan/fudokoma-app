@@ -1,0 +1,14 @@
+.env
+.env.*
+!.env.example
+.venv/
+__pycache__/
+.pytest_cache/
+*.pyc
+.coverage
+htmlcov/
+credentials/
+*service-account*.json
+*firebase-adminsdk*.json
+.idea/
+*.swp
