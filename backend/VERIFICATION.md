@@ -62,7 +62,8 @@ Services left running:
 - MySQL loopback port 3306; persistent named volume fudo-koma_mysql_data
 - Redis loopback port 16379; internal Docker port 6379
 
-Root and admin pages are not implemented and return 404.
+The root page is not implemented. `/admin` serves the local dashboard and
+requires the configured admin credentials described in `README.md`.
 
 To stop without deleting data, run docker compose down from backend/.
 
@@ -72,7 +73,10 @@ Firebase: configure project ID and service-account file outside version control.
 
 Hostinger: not configured or verified. Production Compose, HTTPS reverse proxy, full VPS deployment guide, backup/restore and rollback instructions are Phase 5. The README documents complete Phase 1 development workflows and explicitly identifies later-phase sections.
 
-Customer/owner/admin APIs, pagination, nearby SQL, FCM, notifications and dashboard authorization/sessions/CSRF are not implemented in this phase. Flutter still uses its original demo service.
+Production customer/owner/admin authorization, pagination, nearby SQL, FCM and
+notification delivery are not implemented. The local admin dashboard uses
+signed sessions and CSRF protection, but is not a production admin system.
+Flutter still uses its original demo service.
 
 No load test, 1,000 RPS claim, actual Firebase verification, VPS deployment or production server command runtime verification was performed. The Dockerfile has a non-root Uvicorn workers default, but local Compose uses development reload.
 

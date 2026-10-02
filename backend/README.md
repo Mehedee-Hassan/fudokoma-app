@@ -4,7 +4,7 @@
 
 This Python backend serves the Flutter application. The initial foundation implements configuration, asynchronous MySQL persistence, migrations, Redis connectivity, health/readiness, Docker development, and tests. The current local integration adds cart/user/follow/notification REST endpoints for the Flutter prototype.
 
-**Production authentication and authorization are pending:** these prototype endpoints and `/admin` do not verify Firebase tokens, and must not be exposed in production. Nearby SQL searches, notification creation/delivery, secure admin sessions/CSRF, production Compose/Caddy, and Hostinger deployment also remain future work.
+**Production API authentication and authorization are pending:** the prototype API endpoints do not verify Firebase tokens. The `/admin` dashboard has a separate environment-configured login for local development only and is disabled in production. Do not expose either surface publicly. Nearby SQL searches, production Compose/Caddy, and Hostinger deployment also remain future work.
 
 Stack: Python 3.12+, FastAPI, SQLAlchemy 2.x, asyncmy, MySQL 8.4, Alembic, Pydantic v2/pydantic-settings, Redis, pytest, Docker. Firebase Admin, Jinja2 and form/session dependencies are included for subsequent phases.
 
@@ -12,7 +12,7 @@ Stack: Python 3.12+, FastAPI, SQLAlchemy 2.x, asyncmy, MySQL 8.4, Alembic, Pydan
 Flutter application --- REST API (local prototype)
         |
         v
-FastAPI REST API -------- Jinja admin dashboard (future)
+FastAPI REST API -------- Jinja admin dashboard (local development)
         |
     +---+---+
     |       |
@@ -111,12 +111,21 @@ Edit .env. Example passwords are development-only placeholders; replace them. .e
 | REDIS_PORT | Optional host Redis port, defaults to 6379; no effect on internal port |
 | FIREBASE_PROJECT_ID | Firebase project, reserved for Phase 2 |
 | FIREBASE_CREDENTIALS_PATH | Service-account file path, reserved for Phase 2 |
-| ADMIN_SESSION_SECRET | Reserved for Phase 4; production requires at least 32 characters |
+| ADMIN_SESSION_SECRET | Signs the admin session cookie; use a random value of at least 32 characters |
+| ADMIN_USERNAME | Username for the local web admin dashboard; leave unset to disable login |
+| ADMIN_PASSWORD | Password for the local web admin dashboard; leave unset to disable login |
 | CORS_ORIGINS | JSON array of permitted browser origins including scheme/port; no wildcard in production |
 | TRUSTED_HOSTS | JSON array of allowed hostnames; no wildcard/empty list in production |
 | DOCS_ENABLED | Enables /docs, /redoc and /openapi.json; consider false in production |
 
 Settings load .env relative to the working directory. Use backend/ as the working directory. Never put passwords in source code. Separate DB fields safely handle special characters without manual URL construction.
+
+To enable the local dashboard login, set `ADMIN_USERNAME` and `ADMIN_PASSWORD`
+in `.env`, and generate a unique `ADMIN_SESSION_SECRET` of at least 32
+characters (for example, `python -c "import secrets; print(secrets.token_urlsafe(48))"`).
+Restart the API after changing these values. Open
+`http://localhost:18000/admin`; sign-in sessions expire after eight hours.
+The dashboard is disabled in production and must not be exposed publicly.
 
 ## 7. Start MySQL and Redis — Mode A
 
@@ -205,7 +214,7 @@ Reload is development-only. The Docker API is reachable at port 18000 by default
 | http://127.0.0.1:18000/redoc | ReDoc |
 | http://127.0.0.1:18000/api/v1/health | Liveness: {"status":"ok"} |
 | http://127.0.0.1:18000/api/v1/ready | Startup + SELECT 1; 503 if MySQL unavailable |
-| http://127.0.0.1:18000/admin | Local prototype admin dashboard; disabled in production |
+| http://127.0.0.1:18000/admin | Local admin dashboard; requires configured login and is disabled in production |
 | http://127.0.0.1:18000/api/v1/carts | Local prototype carts |
 | http://127.0.0.1:18000/api/v1/users | Local prototype users |
 

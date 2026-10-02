@@ -9,6 +9,15 @@ def test_mysql_password_is_escaped():
     assert settings.sqlalchemy_url.drivername == "mysql+asyncmy"
 
 
+def test_empty_admin_password_disables_dashboard_login():
+    settings = Settings(
+        _env_file=None,
+        admin_username="",
+        admin_password="",
+    )
+    assert settings.admin_password is None
+
+
 @pytest.mark.parametrize("changes", [
     {"debug": True}, {"admin_session_secret": ""},
     {"trusted_hosts": ["*"]}, {"cors_origins": ["*"]},

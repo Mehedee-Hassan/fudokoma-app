@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Fudo Koma · Admin login</title>
+    <style>
+      :root { color-scheme: light; --ink: #18332b; --muted: #66756f; --green: #176b5b; --line: #e3e9e5; }
+      * { box-sizing: border-box; }
+      body { display: grid; min-height: 100vh; place-items: center; margin: 0; padding: 20px; background: #f5f7f4; color: var(--ink); font: 15px/1.5 system-ui, sans-serif; }
+      main { width: min(100%, 420px); padding: 30px; border: 1px solid var(--line); border-radius: 18px; background: white; box-shadow: 0 12px 36px #18332b10; }
+      h1 { margin: 0; font-size: 27px; }
+      p { color: var(--muted); }
+      label { display: block; margin-top: 18px; font-weight: 600; }
+      input { display: block; width: 100%; margin-top: 6px; padding: 11px 12px; border: 1px solid var(--line); border-radius: 9px; font: inherit; }
+      button { width: 100%; margin-top: 24px; padding: 11px; border: 0; border-radius: 9px; background: var(--green); color: white; font: inherit; font-weight: 650; cursor: pointer; }
+      button:disabled { cursor: not-allowed; opacity: .55; }
+      .error { padding: 10px 12px; border-radius: 9px; background: #fce9e7; color: #8b2d25; }
+      .notice { padding: 12px; border-radius: 9px; background: #fff8e7; color: #70520a; }
+      .local { margin-top: 24px; font-size: 13px; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>Admin login</h1>
+      <p>Sign in to manage prototype users and food carts.</p>
+      {% if error %}<p class="error" role="alert">{{ error }}</p>{% endif %}
+      {% if not login_enabled %}
+      <p class="notice">Admin login is not configured. Set <code>ADMIN_USERNAME</code>, <code>ADMIN_PASSWORD</code>, and a 32-character or longer <code>ADMIN_SESSION_SECRET</code> in the backend environment.</p>
+      {% endif %}
+      <form method="post" action="/admin/login">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <label for="username">Username</label>
+        <input id="username" name="username" autocomplete="username" required>
+        <label for="password">Password</label>
+        <input id="password" name="password" type="password" autocomplete="current-password" required>
+        <button type="submit"{% if not login_enabled %} disabled{% endif %}>Sign in</button>
+      </form>
+      <p class="local">Local development dashboard. Do not expose it publicly.</p>
+    </main>
+  </body>
+</html>

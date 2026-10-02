@@ -1,6 +1,6 @@
 from functools import lru_cache
 from typing import Literal
-from pydantic import Field, model_validator
+from pydantic import Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from sqlalchemy.engine import URL, make_url
 
@@ -23,14 +23,27 @@ class Settings(BaseSettings):
     firebase_project_id: str = ""
     firebase_credentials_path: str = ""
     admin_session_secret: str = ""
+    admin_username: str = ""
+    admin_password: SecretStr | None = None
     cors_origins: list[str] = []
     trusted_hosts: list[str] = ["localhost", "127.0.0.1", "10.0.2.2", "testserver"]
     docs_enabled: bool = True
+
+    @field_validator("admin_password", mode="before")
+    @classmethod
+    def empty_admin_password_is_unset(cls, value):
+        return None if value == "" else value
 
     @model_validator(mode="after")
     def validate_configuration(self):
         if not self.api_v1_prefix.startswith("/") or self.api_v1_prefix.endswith("/"):
             raise ValueError("API_V1_PREFIX must start with / and have no trailing slash")
+        if bool(self.admin_username) != (self.admin_password is not None):
+            raise ValueError("ADMIN_USERNAME and ADMIN_PASSWORD must both be configured")
+        if self.admin_password is not None and len(self.admin_session_secret) < 32:
+            raise ValueError(
+                "ADMIN_SESSION_SECRET must contain at least 32 characters when admin login is enabled"
+            )
         if self.database_url and make_url(self.database_url).drivername != "mysql+asyncmy":
             raise ValueError("DATABASE_URL must use mysql+asyncmy")
         if self.app_env == "production":

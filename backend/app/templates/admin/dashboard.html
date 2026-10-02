@@ -39,12 +39,15 @@
   <body>
     <header>
       <strong>Fudo Koma <span>Admin</span></strong>
-      <span>Local development dashboard</span>
+      <form method="post" action="/admin/logout">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <button type="submit">Sign out</button>
+      </form>
     </header>
     <main>
       <h1>Admin dashboard</h1>
       <p class="intro">Review prototype accounts and food cart locations.</p>
-      <div class="notice"><strong>Development only:</strong> this dashboard has no sign-in and is available only when the backend is not in production. Do not expose it publicly.</div>
+      <div class="notice"><strong>Development only:</strong> this dashboard is available only when the backend is not in production. Do not expose it publicly.</div>
 
       <section class="stats" aria-label="Platform summary">
         <div class="stat"><span>Total users</span><strong>{{ user_count }}</strong></div>
@@ -67,6 +70,7 @@
                 <td>{{ user.created_at.strftime("%Y-%m-%d") }}</td>
                 <td>
                   <form method="post" action="/admin/users/{{ user.id }}/block?blocked={{ 'false' if user.is_blocked else 'true' }}">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
                     <button type="submit">{{ "Unblock" if user.is_blocked else "Block" }}</button>
                   </form>
                 </td>

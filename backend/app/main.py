@@ -1,6 +1,8 @@
 from contextlib import asynccontextmanager
+import secrets
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from starlette.middleware.sessions import SessionMiddleware
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 from redis.asyncio import Redis
 from app.core.config import Settings, get_settings
@@ -39,6 +41,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         openapi_url="/openapi.json" if settings.docs_enabled else None,
     )
     application.state.settings = settings
+    application.add_middleware(
+        SessionMiddleware,
+        secret_key=settings.admin_session_secret or secrets.token_urlsafe(48),
+        session_cookie="fudokoma_admin_session",
+        max_age=8 * 60 * 60,
+        same_site="lax",
+        https_only=settings.app_env == "production",
+    )
     application.add_middleware(TrustedHostMiddleware, allowed_hosts=settings.trusted_hosts)
     if settings.cors_origins or settings.app_env != "production":
         application.add_middleware(CORSMiddleware, allow_origins=settings.cors_origins,
