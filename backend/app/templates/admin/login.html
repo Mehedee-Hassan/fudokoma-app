@@ -13,30 +13,119 @@
       p { color: var(--muted); }
       label { display: block; margin-top: 18px; font-weight: 600; }
       input { display: block; width: 100%; margin-top: 6px; padding: 11px 12px; border: 1px solid var(--line); border-radius: 9px; font: inherit; }
-      button { width: 100%; margin-top: 24px; padding: 11px; border: 0; border-radius: 9px; background: var(--green); color: white; font: inherit; font-weight: 650; cursor: pointer; }
+      button { width: 100%; margin-top: 16px; padding: 11px; border: 0; border-radius: 9px; background: var(--green); color: white; font: inherit; font-weight: 650; cursor: pointer; }
       button:disabled { cursor: not-allowed; opacity: .55; }
       .error { padding: 10px 12px; border-radius: 9px; background: #fce9e7; color: #8b2d25; }
       .notice { padding: 12px; border-radius: 9px; background: #fff8e7; color: #70520a; }
       .local { margin-top: 24px; font-size: 13px; }
+      .divider { margin: 20px 0 0; border-top: 1px solid var(--line); }
     </style>
   </head>
   <body>
     <main>
       <h1>Admin login</h1>
-      <p>Sign in to manage prototype users and food carts.</p>
+      <p>Sign in with an active admin account to manage users and food carts.</p>
       {% if error %}<p class="error" role="alert">{{ error }}</p>{% endif %}
-      {% if not login_enabled %}
-      <p class="notice">Admin login is not configured. Set <code>ADMIN_USERNAME</code>, <code>ADMIN_PASSWORD</code>, and a 32-character or longer <code>ADMIN_SESSION_SECRET</code> in the backend environment.</p>
+      {% if firebase_login_enabled %}
+      <form id="firebase-login">
+        <input id="csrf-token" type="hidden" value="{{ csrf_token }}">
+        <label for="email">Email</label>
+        <input id="email" type="email" autocomplete="username" required>
+        <label for="password">Password</label>
+        <input id="password" type="password" autocomplete="current-password" required>
+        <button id="email-submit" type="submit">Sign in with email</button>
+        <button id="google-submit" type="button">Continue with Google</button>
+        <p id="firebase-error" class="error" role="alert" hidden></p>
+      </form>
+      <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.10.0/firebase-app.js";
+        import {
+          getAuth,
+          GoogleAuthProvider,
+          signInWithEmailAndPassword,
+          signInWithPopup,
+          signOut
+        } from "https://www.gstatic.com/firebasejs/11.10.0/firebase-auth.js";
+
+        const app = initializeApp({{ firebase_config|tojson }});
+        const auth = getAuth(app);
+        const form = document.getElementById("firebase-login");
+        const errorBox = document.getElementById("firebase-error");
+        const emailButton = document.getElementById("email-submit");
+        const googleButton = document.getElementById("google-submit");
+
+        function showError(message) {
+          errorBox.textContent = message;
+          errorBox.hidden = false;
+        }
+
+        async function establishSession(credential) {
+          if (!credential.user.emailVerified) {
+            await signOut(auth);
+            throw new Error("Verify the account email before using the admin dashboard.");
+          }
+          const response = await fetch("/admin/session", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              id_token: await credential.user.getIdToken(true),
+              csrf_token: document.getElementById("csrf-token").value
+            })
+          });
+          if (!response.ok) {
+            const body = await response.json().catch(() => ({}));
+            await signOut(auth);
+            throw new Error(body.detail || "This account does not have admin access.");
+          }
+          window.location.assign("/admin");
+        }
+
+        form.addEventListener("submit", async (event) => {
+          event.preventDefault();
+          errorBox.hidden = true;
+          emailButton.disabled = googleButton.disabled = true;
+          try {
+            const credential = await signInWithEmailAndPassword(
+              auth,
+              document.getElementById("email").value.trim(),
+              document.getElementById("password").value
+            );
+            await establishSession(credential);
+          } catch (error) {
+            showError(error.message || "Sign-in failed.");
+          } finally {
+            emailButton.disabled = googleButton.disabled = false;
+          }
+        });
+
+        googleButton.addEventListener("click", async () => {
+          errorBox.hidden = true;
+          emailButton.disabled = googleButton.disabled = true;
+          try {
+            const credential = await signInWithPopup(auth, new GoogleAuthProvider());
+            await establishSession(credential);
+          } catch (error) {
+            showError(error.message || "Google sign-in failed.");
+          } finally {
+            emailButton.disabled = googleButton.disabled = false;
+          }
+        });
+      </script>
       {% endif %}
+      {% if login_enabled %}
+      {% if firebase_login_enabled %}<div class="divider"></div>{% endif %}
       <form method="post" action="/admin/login">
         <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-        <label for="username">Username</label>
+        <label for="username">Admin username</label>
         <input id="username" name="username" autocomplete="username" required>
-        <label for="password">Password</label>
-        <input id="password" name="password" type="password" autocomplete="current-password" required>
-        <button type="submit"{% if not login_enabled %} disabled{% endif %}>Sign in</button>
+        <label for="local-password">Password</label>
+        <input id="local-password" name="password" type="password" autocomplete="current-password" required>
+        <button type="submit">Sign in with username and password</button>
       </form>
-      <p class="local">Local development dashboard. Do not expose it publicly.</p>
+      {% elif not firebase_login_enabled %}
+      <p class="notice">Admin login is not configured. Set Firebase web authentication values or configure <code>ADMIN_USERNAME</code>, <code>ADMIN_PASSWORD</code>, and a 32-character or longer <code>ADMIN_SESSION_SECRET</code>.</p>
+      {% endif %}
+      <p class="local">Firebase sign-in requires a verified account with the admin role. Username/password access is enabled only when configured on the server.</p>
     </main>
   </body>
 </html>

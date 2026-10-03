@@ -1,5 +1,21 @@
 # Phase 1 verification — 2026-10-02 (Asia/Tokyo)
 
+## Deployment readiness update
+
+The current code now includes Firebase email/password and Google sign-in,
+Firebase Admin ID-token verification, role/ownership authorization, and a
+Firebase-authenticated admin dashboard session. A Hostinger-oriented
+production Compose stack and Caddy HTTPS reverse proxy are present. These
+changes passed 27 backend tests, 11 Flutter tests, Dart diagnostics, and a
+production Compose configuration check. Firebase token verification is
+mocked in automated tests; no real Firebase project or production server has
+been configured or exercised.
+
+Public deployment is not complete until Firebase options/service-account
+credentials, the real domain/DNS, production secrets, first admin bootstrap,
+backups, and the Hostinger VPS are configured. See the deployment procedure
+in `README.md`.
+
 ## Repository and file changes
 
 The supplied workspace was empty. Cloned https://github.com/Mehedee-Hassan/fudo-koma.git into it using Windows certificate validation (Git's default CA backend initially failed). Inspected Flutter models, FirebaseService, FirestoreService, pubspec and ignore rules. No AGENTS.md found in the cloned repository.
@@ -53,31 +69,22 @@ Modified existing files: none. Created files were refined during verification.
 
 ## Current local state
 
-Services left running:
-- API: http://127.0.0.1:18000
-- Swagger: http://127.0.0.1:18000/docs
-- ReDoc: http://127.0.0.1:18000/redoc
-- Health: http://127.0.0.1:18000/api/v1/health
-- Ready: http://127.0.0.1:18000/api/v1/ready
-- MySQL loopback port 3306; persistent named volume fudo-koma_mysql_data
-- Redis loopback port 16379; internal Docker port 6379
-
-The root page is not implemented. `/admin` serves the local dashboard and
-requires the configured admin credentials described in `README.md`.
+The development Docker services may remain from the prior local integration:
+API at `http://127.0.0.1:18000`, MySQL on loopback port 3306, and Redis on
+loopback port 16379. The production Compose stack has not been started.
+Protected API routes require Firebase authentication; `/admin` uses Firebase
+admin-role sign-in when configured.
 
 To stop without deleting data, run docker compose down from backend/.
 
 ## Remaining work / limitations
 
-Firebase: configure project ID and service-account file outside version control. Actual token verification and local-user creation are Phase 2; no fake verification/bypass exists.
-
-Hostinger: not configured or verified. Production Compose, HTTPS reverse proxy, full VPS deployment guide, backup/restore and rollback instructions are Phase 5. The README documents complete Phase 1 development workflows and explicitly identifies later-phase sections.
-
-Production customer/owner/admin authorization, pagination, nearby SQL, FCM and
-notification delivery are not implemented. The local admin dashboard uses
-signed sessions and CSRF protection, but is not a production admin system.
-Flutter still uses its original demo service.
-
-No load test, 1,000 RPS claim, actual Firebase verification, VPS deployment or production server command runtime verification was performed. The Dockerfile has a non-root Uvicorn workers default, but local Compose uses development reload.
+Configure real Firebase project settings and keys outside version control.
+Hostinger: no VPS has been provisioned or deployment run. Apply the documented
+DNS, firewall, secret, migration, first-admin, and independent-backup steps.
+Firebase verification tests use mocks; no live Firebase login, load test,
+production server run, backup restore, or VPS deployment has been verified.
+Nearby SQL search, FCM delivery, rate limiting/caching, monitoring, and
+production backup automation remain future work.
 
 Dependency versions use bounded ranges, not a reproducible lock. Review/lock before production. Redis caching/rate limiting is not implemented yet. Readiness checks connectivity, not schema version. DB timestamp updates via ORM use Python UTC; external SQL writers must set updated_at explicitly.

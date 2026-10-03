@@ -1,6 +1,7 @@
 .env
 .env.*
 !.env.example
+!.env.production.example
 .venv/
 __pycache__/
 .pytest_cache/
@@ -12,3 +13,4 @@ credentials/
 *firebase-adminsdk*.json
 .idea/
 *.swp
+.env.production

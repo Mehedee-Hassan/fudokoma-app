@@ -6,15 +6,17 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_session, require_local_prototype
+from app.api.deps import get_current_user, get_session
 from app.models.cart import Cart
 from app.models.follow import Follow
+from app.models.user import User
 
 router = APIRouter(prefix="/carts", tags=["carts"])
 
 
 class CartCreate(BaseModel):
-    owner_id: UUID
+    model_config = ConfigDict(extra="forbid")
+
     name: str = Field(min_length=1, max_length=200)
     description: str = ""
     category: str = Field(min_length=1, max_length=100)
@@ -62,11 +64,7 @@ class CartRead(BaseModel):
     followers_count: int = 0
 
 
-@router.get(
-    "",
-    response_model=list[CartRead],
-    dependencies=[Depends(require_local_prototype)],
-)
+@router.get("", response_model=list[CartRead])
 async def list_carts(session: AsyncSession = Depends(get_session)):
     result = await session.execute(
         select(Cart, func.count(Follow.id).label("followers_count"))
@@ -86,10 +84,18 @@ async def list_carts(session: AsyncSession = Depends(get_session)):
     "",
     response_model=CartRead,
     status_code=status.HTTP_201_CREATED,
-    dependencies=[Depends(require_local_prototype)],
 )
-async def create_cart(payload: CartCreate, session: AsyncSession = Depends(get_session)):
-    cart = Cart(**payload.model_dump())
+async def create_cart(
+    payload: CartCreate,
+    current_user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    if current_user.role not in {"owner", "admin"}:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Cart owner role required",
+        )
+    cart = Cart(owner_id=current_user.id, **payload.model_dump())
     session.add(cart)
     await session.commit()
     await session.refresh(cart)
@@ -99,16 +105,21 @@ async def create_cart(payload: CartCreate, session: AsyncSession = Depends(get_s
 @router.patch(
     "/{cart_id}",
     response_model=CartRead,
-    dependencies=[Depends(require_local_prototype)],
 )
 async def update_cart(
     cart_id: UUID,
     payload: CartUpdate,
+    current_user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
 ):
     cart = await session.get(Cart, cart_id)
     if cart is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Cart not found")
+    if cart.owner_id != current_user.id and current_user.role != "admin":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You may only update your own carts",
+        )
     for field, value in payload.model_dump(exclude_unset=True).items():
         setattr(cart, field, value)
     await session.commit()

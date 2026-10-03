@@ -1,5 +1,8 @@
 from contextlib import asynccontextmanager
 import secrets
+from pathlib import Path
+
+import firebase_admin
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.middleware.sessions import SessionMiddleware
@@ -24,6 +27,18 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         engine, session_factory = create_database(settings)
         application.state.engine = engine
         application.state.session_factory = session_factory
+        application.state.firebase_app = None
+        if settings.firebase_project_id:
+            credential_path = Path(settings.firebase_credentials_path)
+            if not credential_path.is_file():
+                await engine.dispose()
+                raise RuntimeError("Configured Firebase credentials file is unavailable")
+            firebase_app = firebase_admin.initialize_app(
+                firebase_admin.credentials.Certificate(str(credential_path)),
+                options={"projectId": settings.firebase_project_id},
+                name=f"fudokoma-{id(application)}",
+            )
+            application.state.firebase_app = firebase_app
         application.state.redis = Redis.from_url(
             settings.redis_url, socket_connect_timeout=2, socket_timeout=2)
         application.state.started = True
@@ -33,6 +48,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             application.state.started = False
             await application.state.redis.aclose()
             await engine.dispose()
+            if application.state.firebase_app is not None:
+                firebase_admin.delete_app(application.state.firebase_app)
 
     application = FastAPI(
         title=settings.app_name, debug=settings.debug, lifespan=lifespan,
