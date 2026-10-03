@@ -115,8 +115,8 @@ Edit .env. Example passwords are development-only placeholders; replace them. .e
 | FIREBASE_AUTH_DOMAIN | Firebase Auth domain used by the web admin sign-in |
 | FIREBASE_WEB_APP_ID | Firebase web app ID used by the web admin sign-in |
 | ADMIN_SESSION_SECRET | Signs admin session cookies; use a random value of at least 32 characters |
-| ADMIN_USERNAME | Optional local-development-only dashboard username |
-| ADMIN_PASSWORD | Optional local-development-only dashboard password |
+| ADMIN_USERNAME | Optional dashboard username/password fallback; production requires a strong password |
+| ADMIN_PASSWORD | Optional dashboard password fallback; at least 20 characters in production |
 | CORS_ORIGINS | JSON array of permitted browser origins including scheme/port; no wildcard in production |
 | TRUSTED_HOSTS | JSON array of allowed hostnames; no wildcard/empty list in production |
 | DOCS_ENABLED | Enables /docs, /redoc and /openapi.json; consider false in production |
@@ -129,7 +129,11 @@ service-account path in `.env`. For the optional local-only shared dashboard
 login, set `ADMIN_USERNAME` and `ADMIN_PASSWORD` and generate a unique
 `ADMIN_SESSION_SECRET` of at least 32 characters (for example,
 `python -c "import secrets; print(secrets.token_urlsafe(48))"`). The public
-dashboard uses Firebase sign-in and database admin roles.
+dashboard supports Firebase sign-in and database admin roles. A configured
+username/password also enables the optional dashboard fallback in production;
+this grants dashboard admin access independently of Firebase/MySQL roles, so
+use a unique strong password and disable the fallback when it is no longer
+needed.
 
 ## 7. Start MySQL and Redis - Mode A
 
@@ -426,12 +430,26 @@ Deployment files are `docker-compose.prod.yml`, `deploy/Caddyfile`, and
    values, and the Firebase service-account file at
    `credentials/firebase-adminsdk.json`. Never paste secret values into chat
    or commit them.
+   If Firebase dashboard sign-in is unavailable, optionally set
+   `ADMIN_USERNAME` and `ADMIN_PASSWORD` in `.env.production`. Use a unique
+   password at least 20 characters long; generate one with
+   `openssl rand -hex 24`. This fallback grants dashboard admin access without
+   checking a Firebase account or its MySQL role. Keep it secret and remove
+   both settings once Firebase sign-in works. It only logs into `/admin`; it
+   does not authenticate Flutter clients or API requests.
 7. Apply the schema migration, then build and start the API and HTTPS proxy:
 
    ```sh
    docker compose --env-file .env.production -f docker-compose.prod.yml run --rm api alembic upgrade head
    docker compose --env-file .env.production -f docker-compose.prod.yml up -d --build
    docker compose --env-file .env.production -f docker-compose.prod.yml ps
+   ```
+
+   If you change `.env.production` later, recreate the API so Docker loads
+   the new settings:
+
+   ```sh
+   docker compose --env-file .env.production -f docker-compose.prod.yml up -d --force-recreate api
    ```
 
    Caddy obtains HTTPS certificates after DNS resolves and ports 80/443 are
@@ -459,7 +477,9 @@ Deployment files are `docker-compose.prod.yml`, `deploy/Caddyfile`, and
 
    Verify exactly one row was changed. Afterwards, sign into `/admin` with
    that verified Firebase email/password or Google account. The dashboard
-   rechecks the account's active admin role on each request.
+   rechecks the account's active admin role on each request. For the full
+   first-admin procedure, including what to do if the MySQL user row is
+   missing, see [the admin bootstrap guide](../docs/add-admin.md).
 
 Never expose the Docker API, MySQL, or Redis ports to the internet. A VPS has
 not been provisioned by this workspace; deployment still requires SSH access,

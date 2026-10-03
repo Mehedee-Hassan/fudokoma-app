@@ -136,7 +136,7 @@ def test_local_admin_dashboard_lists_users_and_carts():
                 r'name="csrf_token" value="([^"]+)"',
                 login_page.text,
             ).group(1)
-            assert "Local development username" in login_page.text
+            assert "Admin username" in login_page.text
 
             invalid_login = client.post(
                 "/admin/login",
@@ -243,6 +243,8 @@ def test_production_admin_dashboard_uses_firebase_admin_accounts(
             firebase_web_api_key="web-api-key",
             firebase_auth_domain="test-project.firebaseapp.com",
             firebase_web_app_id="web-app-id",
+            admin_username="emergency-admin",
+            admin_password="a" * 32,
             trusted_hosts=["testserver"],
         )
     )
@@ -281,6 +283,31 @@ def test_production_admin_dashboard_uses_firebase_admin_accounts(
             assert dashboard.status_code == 200
             assert "Admin dashboard" in dashboard.text
             assert "Inage Eats" in dashboard.text
+            dashboard_csrf = re.search(
+                r'name="csrf_token" value="([^"]+)"',
+                dashboard.text,
+            ).group(1)
+            logout = client.post(
+                "/admin/logout",
+                data={"csrf_token": dashboard_csrf},
+            )
+            assert logout.status_code == 303
+
+            password_login_page = client.get("/admin/login")
+            password_csrf = re.search(
+                r'name="csrf_token" value="([^"]+)"',
+                password_login_page.text,
+            ).group(1)
+            password_login = client.post(
+                "/admin/login",
+                data={
+                    "username": "emergency-admin",
+                    "password": "a" * 32,
+                    "csrf_token": password_csrf,
+                },
+            )
+            assert password_login.status_code == 303
+            assert client.get("/admin").status_code == 200
     finally:
         app.dependency_overrides.clear()
 
@@ -298,7 +325,7 @@ def test_admin_login_requires_credentials_to_be_configured():
     ) as client:
         login_page = client.get("/admin/login")
         assert login_page.status_code == 200
-        assert "Admin login is not configured" in login_page.text
+        assert "Sign in with username and password" not in login_page.text
         assert client.get("/admin").status_code == 303
 
 

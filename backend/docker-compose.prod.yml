@@ -65,6 +65,8 @@ services:
       FIREBASE_WEB_API_KEY: ${FIREBASE_WEB_API_KEY:?Set Firebase web settings in .env.production}
       FIREBASE_AUTH_DOMAIN: ${FIREBASE_AUTH_DOMAIN:?Set Firebase web settings in .env.production}
       FIREBASE_WEB_APP_ID: ${FIREBASE_WEB_APP_ID:?Set Firebase web settings in .env.production}
+      ADMIN_USERNAME: ${ADMIN_USERNAME:-}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-}
       ADMIN_SESSION_SECRET: ${ADMIN_SESSION_SECRET:?Set ADMIN_SESSION_SECRET in .env.production}
       CORS_ORIGINS: "[]"
       TRUSTED_HOSTS: '["${DOMAIN:?Set DOMAIN in .env.production}","127.0.0.1","localhost"]'

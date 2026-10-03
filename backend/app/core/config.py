@@ -47,6 +47,14 @@ class Settings(BaseSettings):
             raise ValueError(
                 "ADMIN_SESSION_SECRET must contain at least 32 characters when admin login is enabled"
             )
+        if (
+            self.app_env == "production"
+            and self.admin_password is not None
+            and len(self.admin_password.get_secret_value()) < 20
+        ):
+            raise ValueError(
+                "Production ADMIN_PASSWORD must contain at least 20 characters"
+            )
         if bool(self.firebase_project_id) != bool(self.firebase_credentials_path):
             raise ValueError(
                 "FIREBASE_PROJECT_ID and FIREBASE_CREDENTIALS_PATH must both be configured"
@@ -75,6 +83,10 @@ class Settings(BaseSettings):
                 self.firebase_web_api_key,
                 self.firebase_auth_domain,
                 self.firebase_web_app_id,
+                self.admin_username,
+                self.admin_password.get_secret_value()
+                if self.admin_password is not None
+                else "",
             )
             if any(
                 value.lower().startswith(("replace_", "replace-", "change-this"))

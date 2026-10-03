@@ -68,6 +68,11 @@ async def require_dashboard_admin(
     firebase_uid = request.session.get("admin_firebase_uid")
     if firebase_uid is None:
         if request.app.state.settings.app_env == "production":
+            if (
+                request.session.get("admin_auth_method") == "password"
+                and credentials_configured(request.app.state.settings)
+            ):
+                return None
             request.session.clear()
             raise HTTPException(
                 status_code=status.HTTP_303_SEE_OTHER,
@@ -105,10 +110,7 @@ async def login_page(request: Request):
         name="admin/login.html",
         context={
             "csrf_token": request.session["csrf_token"],
-            "login_enabled": (
-                settings.app_env != "production"
-                and credentials_configured(settings)
-            ),
+            "login_enabled": credentials_configured(settings),
             "firebase_login_enabled": firebase_config is not None,
             "firebase_config": firebase_config,
             "error": None,
@@ -125,10 +127,10 @@ async def local_login(
 ):
     verify_csrf(request, csrf_token)
     settings: Settings = request.app.state.settings
-    if settings.app_env == "production" or not credentials_configured(settings):
+    if not credentials_configured(settings):
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="Local admin login is unavailable",
+            detail="Username and password admin login is not configured",
         )
 
     configured_password = settings.admin_password.get_secret_value()
@@ -149,7 +151,7 @@ async def local_login(
             name="admin/login.html",
             context={
                 "csrf_token": csrf_token,
-                "login_enabled": True,
+                "login_enabled": credentials_configured(settings),
                 "firebase_login_enabled": firebase_config is not None,
                 "firebase_config": firebase_config,
                 "error": "The username or password is incorrect.",
@@ -159,6 +161,7 @@ async def local_login(
 
     request.session.clear()
     request.session["admin_authenticated"] = True
+    request.session["admin_auth_method"] = "password"
     request.session["csrf_token"] = secrets.token_urlsafe(32)
     return RedirectResponse(
         url="/admin",
@@ -196,6 +199,7 @@ async def create_firebase_admin_session(
 
     request.session.clear()
     request.session["admin_authenticated"] = True
+    request.session["admin_auth_method"] = "firebase"
     request.session["admin_firebase_uid"] = firebase_uid
     request.session["csrf_token"] = secrets.token_urlsafe(32)
     return Response(status_code=status.HTTP_204_NO_CONTENT)

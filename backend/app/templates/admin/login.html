@@ -116,16 +116,16 @@
       {% if firebase_login_enabled %}<div class="divider"></div>{% endif %}
       <form method="post" action="/admin/login">
         <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-        <label for="username">Local development username</label>
+        <label for="username">Admin username</label>
         <input id="username" name="username" autocomplete="username" required>
         <label for="local-password">Password</label>
         <input id="local-password" name="password" type="password" autocomplete="current-password" required>
-        <button type="submit">Sign in locally</button>
+        <button type="submit">Sign in with username and password</button>
       </form>
       {% elif not firebase_login_enabled %}
-      <p class="notice">Admin login is not configured. Set Firebase web authentication values for deployment, or configure <code>ADMIN_USERNAME</code>, <code>ADMIN_PASSWORD</code>, and a 32-character or longer <code>ADMIN_SESSION_SECRET</code> for local development.</p>
+      <p class="notice">Admin login is not configured. Set Firebase web authentication values or configure <code>ADMIN_USERNAME</code>, <code>ADMIN_PASSWORD</code>, and a 32-character or longer <code>ADMIN_SESSION_SECRET</code>.</p>
       {% endif %}
-      <p class="local">Admin access is granted only to verified accounts with the admin role.</p>
+      <p class="local">Firebase sign-in requires a verified account with the admin role. Username/password access is enabled only when configured on the server.</p>
     </main>
   </body>
 </html>

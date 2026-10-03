@@ -45,6 +45,24 @@ def test_production_rejects_example_placeholders():
         )
 
 
+def test_production_manual_admin_password_must_be_strong():
+    with pytest.raises(ValidationError, match="at least 20 characters"):
+        Settings(
+            _env_file=None,
+            app_env="production",
+            admin_session_secret="s" * 40,
+            admin_username="admin",
+            admin_password="weak-password",
+            mysql_password="database-password",
+            firebase_project_id="project-id",
+            firebase_credentials_path="/run/secrets/firebase.json",
+            firebase_web_api_key="api-key",
+            firebase_auth_domain="project.firebaseapp.com",
+            firebase_web_app_id="app-id",
+            trusted_hosts=["api.example.com"],
+        )
+
+
 @pytest.mark.parametrize("changes", [
     {"debug": True}, {"admin_session_secret": ""},
     {"trusted_hosts": ["*"]}, {"cors_origins": ["*"]},
