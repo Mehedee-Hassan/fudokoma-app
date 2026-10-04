@@ -5,16 +5,21 @@
 // gestures. You can also use WidgetTester to find child widgets in the widget
 // tree, read text, and verify that the values of widget properties are correct.
 
+import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
-import 'package:follo_cart/main.dart';
+import 'package:follo_cart/auth/auth_gate.dart';
 
 void main() {
-  testWidgets('shows the map-first explore screen', (WidgetTester tester) async {
-    await tester.pumpWidget(const FolloCartApp());
+  testWidgets('signed-out users can enter the guest app', (WidgetTester tester) async {
+    await tester.pumpWidget(
+      const MaterialApp(
+        home: AuthGate(
+          child: Scaffold(body: Text('Explore map')),
+        ),
+      ),
+    );
 
-    expect(find.text('Find your next bite'), findsOneWidget);
-    expect(find.text('Near you now'), findsOneWidget);
-    expect(find.text('Explore'), findsOneWidget);
+    expect(find.text('Explore map'), findsOneWidget);
   });
 }

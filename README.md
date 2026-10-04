@@ -21,34 +21,48 @@ The map uses [`flutter_map`](https://pub.dev/packages/flutter_map).
 
 ## Connect Flutter to the local backend
 
-Start the API and its MySQL/Redis dependencies from `backend/` with
-`docker compose up -d --build`. The API listens on `http://localhost:18000`
-in the checked-in local environment. Run Flutter with
-`flutter run --dart-define=API_BASE_URL=http://localhost:18000` for web or
-desktop. For the Android emulator, use
-`flutter run --dart-define=API_BASE_URL=http://10.0.2.2:18000`. A physical
-device needs the computer's LAN address instead.
+Android builds use the deployed HTTPS API at
+`https://srv1518746.hstgr.cloud` by default, so an emulator or physical device
+can connect without a local network address. The public API health check is
+`https://srv1518746.hstgr.cloud/api/v1/ready`. This uses the deployed backend
+and its database; actions performed by signed-in accounts affect that service.
 
-The map loads carts and follow status from `/api/v1/carts` and the current
-prototype user from `/api/v1/users`. Cart status, follows, and moderation
-updates are persisted through the same API. These unauthenticated prototype
-endpoints are disabled when the backend runs with `APP_ENV=production`; do not
-expose a development backend to the public internet.
+For local development, start the API and its MySQL/Redis dependencies from
+`backend/` with `docker compose up -d --build`. Override the API address with
+`flutter run --dart-define=API_BASE_URL=http://10.0.2.2:18000` on an Android
+emulator. A physical Android device should use the development computer's LAN
+IP instead. Web and desktop default to `http://localhost:18000`.
+
+The map loads carts from `/api/v1/carts`; signed-in users authenticate with
+Firebase and send ID tokens to the backend. Cart follows and account data are
+scoped to the authenticated account. Cart-owner and admin permissions come
+from the backend user record, not a client-side role selector.
+
+The app opens in guest mode so visitors can browse public carts without an
+account. After device location permission is granted, it requests carts within
+5 km from `/api/v1/carts?latitude=...&longitude=...&radius_km=5`; if location is
+unavailable it shows the default map area and its carts. Signing in is required
+to follow carts or access account features. The native Android and iOS Firebase
+configuration must be completed before authentication is available.
 
 To save another cart from Flutter, open **Profile → Cart owner → Manage my
 cart → Add a food cart**. Enter the cart details and coordinates, then select
 **Save cart**. The map refreshes to the newly saved location. The local owner
 prototype account is created automatically if it does not already exist.
 
-The local web admin dashboard is available at
-`http://localhost:18000/admin`. It lists users and saved cart locations and
-lets you block or unblock prototype users. It has no sign-in and is disabled
-when `APP_ENV=production`; do not expose it publicly.
+The web admin dashboard is available at `http://localhost:18000/admin` in
+development and uses Firebase email/Google sign-in when configured. Only
+verified accounts with the `admin` role in MySQL can access it. A local
+username/password can be configured for development; a separate optional
+username/password dashboard fallback is documented for production. For an
+HTTPS VPS deployment, see
+[backend/README.md](backend/README.md#production-deployment-hostinger-vps).
+For the first production admin bootstrap, see [docs/add-admin.md](docs/add-admin.md).
 
-For a physical device, set `API_BIND_ADDRESS` to `0.0.0.0` in the backend's
-local `.env`, replace `localhost` in `API_BASE_URL` with your development
-computer's LAN IP, and add that IP to `TRUSTED_HOSTS`. This exposes the
-unauthenticated development API to your LAN; use it only on a trusted network.
+When connecting a physical device to your own local backend, set
+`API_BIND_ADDRESS` to `0.0.0.0` in the backend's local `.env`, use the
+development computer's LAN IP in `API_BASE_URL`, and add that IP to
+`TRUSTED_HOSTS`. Expose the development API only on a trusted network.
 
 - Without a Mapbox token, the app uses OpenStreetMap tiles for development preview.
 - To use Mapbox streets, replace `YOUR_MAPBOX_ACCESS_TOKEN` in `lib/config/mapbox_config.dart` with a valid public token.
@@ -87,12 +101,11 @@ Both commands currently pass.
 - `SETUP_FIREBASE.md` documents Firebase setup.
 - `txt.md` contains the detailed current status and remaining limitations.
 
-## Production work remaining
+## Further product work
 
-- Add a real Mapbox token and production tile configuration.
-- Connect Firestore, Firebase Authentication, Firebase Storage, and FCM.
-- Persist users, carts, follows, schedules, and updates.
+- Configure a real Mapbox token and review production tile usage.
+- Connect Firebase Storage and FCM for image uploads and push notifications.
 - Add live cart-owner location publishing.
 - Implement background location checks and OS-level push notifications.
-- Replace role previews with protected workflows.
 - Complete Android and iOS permission configuration and device testing.
+- Establish production backups, monitoring, privacy policy, and incident procedures.

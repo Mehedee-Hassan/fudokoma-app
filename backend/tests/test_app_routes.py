@@ -367,6 +367,114 @@ def test_authenticated_api_enforces_account_and_role_boundaries():
         app.dependency_overrides.clear()
 
 
+def test_public_carts_can_be_filtered_by_device_location():
+    from app.api.routes.carts import router
+
+    nearby_cart = SimpleNamespace(
+        id=uuid4(),
+        owner_id=uuid4(),
+        name="Nearby cart",
+        description="Nearby",
+        category="Street food",
+        is_open=True,
+        latitude=35.6327,
+        longitude=140.0908,
+        schedule="11 AM - 8 PM",
+        image_url=None,
+        updated_at=datetime(2026, 10, 2),
+    )
+    distant_cart = SimpleNamespace(
+        id=uuid4(),
+        owner_id=uuid4(),
+        name="Distant cart",
+        description="Distant",
+        category="Street food",
+        is_open=True,
+        latitude=35.72,
+        longitude=140.09,
+        schedule="11 AM - 8 PM",
+        image_url=None,
+        updated_at=datetime(2026, 10, 2),
+    )
+
+    class CartSession:
+        async def execute(self, statement):
+            return FakeResult([(nearby_cart, 2), (distant_cart, 1)])
+
+    app = create_app(Settings(_env_file=None))
+
+    async def override_session():
+        yield CartSession()
+
+    app.dependency_overrides[get_session] = override_session
+    try:
+        with TestClient(app) as client:
+            public_response = client.get("/api/v1/carts")
+            assert public_response.status_code == 200
+            assert len(public_response.json()) == 2
+
+            nearby_response = client.get(
+                "/api/v1/carts",
+                params={
+                    "latitude": 35.6327,
+                    "longitude": 140.0908,
+                    "radius_km": 5,
+                },
+            )
+            assert nearby_response.status_code == 200
+            assert [cart["name"] for cart in nearby_response.json()] == [
+                "Nearby cart"
+            ]
+
+            incomplete_location = client.get(
+                "/api/v1/carts",
+                params={"latitude": 35.6327},
+            )
+            assert incomplete_location.status_code == 422
+    finally:
+        app.dependency_overrides.clear()
+
+
+def test_only_cart_owners_can_list_their_managed_carts():
+    app = create_app(Settings(_env_file=None))
+    fake_user = FakeSession().user
+
+    async def override_current_user():
+        return fake_user
+
+    class CartSession:
+        async def execute(self, statement):
+            cart = SimpleNamespace(
+                id=uuid4(),
+                owner_id=fake_user.id,
+                name="Owned cart",
+                description="My cart",
+                category="Street food",
+                is_open=True,
+                latitude=35.6327,
+                longitude=140.0908,
+                schedule="11 AM - 8 PM",
+                image_url=None,
+                updated_at=datetime(2026, 10, 2),
+            )
+            return FakeResult([(cart, 0)])
+
+    async def override_session():
+        yield CartSession()
+
+    app.dependency_overrides[get_current_user] = override_current_user
+    app.dependency_overrides[get_session] = override_session
+    try:
+        with TestClient(app) as client:
+            assert client.get("/api/v1/carts/mine").status_code == 403
+            fake_user.role = "owner"
+            response = client.get("/api/v1/carts/mine")
+            assert response.status_code == 200
+            assert response.json()[0]["name"] == "Owned cart"
+    finally:
+        app.dependency_overrides.clear()
+
+
 def test_user_api_requires_a_bearer_token():
     with TestClient(create_app(Settings(_env_file=None))) as client:
         response = client.get("/api/v1/users/me")

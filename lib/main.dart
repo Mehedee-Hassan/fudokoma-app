@@ -1,9 +1,13 @@
+import 'dart:async';
+
 import 'package:firebase_core/firebase_core.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:latlong2/latlong.dart' as latlng;
 
+import 'auth/auth_gate.dart';
 import 'firebase_options.dart';
 import 'config/mapbox_config.dart';
 import 'models/food_cart_model.dart';
@@ -15,13 +19,17 @@ Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
   try {
+    final firebaseOptions = DefaultFirebaseOptions.currentPlatform;
+    if (firebaseOptions.apiKey.startsWith('REPLACE_WITH_') ||
+        firebaseOptions.appId.startsWith('REPLACE_WITH_') ||
+        firebaseOptions.projectId.startsWith('REPLACE_WITH_')) {
+      throw StateError('Firebase project values are still placeholders.');
+    }
     await Firebase.initializeApp(
-      options: DefaultFirebaseOptions.currentPlatform,
+      options: firebaseOptions,
     );
-  } catch (_) {
-    debugPrint(
-      'Firebase is not configured yet. Replace the values in lib/firebase_options.dart with your real Firebase project settings.',
-    );
+  } catch (error, stackTrace) {
+    debugPrint('Firebase initialization failed: $error\n$stackTrace');
   }
 
   runApp(const FolloCartApp());
@@ -47,7 +55,7 @@ class FolloCartApp extends StatelessWidget {
         fontFamily: 'Avenir',
         useMaterial3: true,
       ),
-      home: const Shell(),
+      home: const AuthGate(child: Shell()),
     );
   }
 }
@@ -106,30 +114,53 @@ class _ShellState extends State<Shell> {
   bool isLoadingCarts = true;
   String? locationError;
   String? backendError;
+  String? accountError;
   String? prototypeUserId;
   String? prototypeOwnerId;
+  UserProfileModel? currentProfile;
   List<UserProfileModel> users = [];
+  List<FoodCart> ownedCarts = [];
   List<NotificationModel> notifications = [];
   final pendingCartActions = <String>{};
   latlng.LatLng userLocation = defaultMapCenter;
+  bool hasDeviceLocation = false;
+  int _backendLoadGeneration = 0;
   final mapController = MapController();
   final backendService = BackendService();
   final carts = <FoodCart>[];
+  StreamSubscription<User?>? _authSubscription;
 
   @override
   void initState() {
     super.initState();
     _loadBackendData();
     _loadUserLocation();
+    if (Firebase.apps.isNotEmpty) {
+      _authSubscription = FirebaseAuth.instance.userChanges().listen((_) {
+        _loadBackendData();
+      });
+    }
   }
 
   @override
   void dispose() {
+    _authSubscription?.cancel();
     backendService.close();
     super.dispose();
   }
 
+  bool get _hasVerifiedFirebaseUser {
+    if (Firebase.apps.isEmpty) return false;
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null) return false;
+    final requiresVerification = user.providerData.any(
+      (provider) => provider.providerId == 'password',
+    );
+    return !requiresVerification || user.emailVerified;
+  }
+
   Future<void> _loadBackendData() async {
+    final loadGeneration = ++_backendLoadGeneration;
     if (mounted) {
       setState(() {
         isLoadingCarts = true;
@@ -137,24 +168,48 @@ class _ShellState extends State<Shell> {
       });
     }
     try {
-      final user = await backendService.registerUser(
-        firebaseUid: 'flutter-local-prototype',
-        name: 'Maya C.',
+      final records = await backendService.fetchFoodCarts(
+        latitude: hasDeviceLocation ? userLocation.latitude : null,
+        longitude: hasDeviceLocation ? userLocation.longitude : null,
       );
-      var loadedUsers = await backendService.fetchUsers();
-      var owner = loadedUsers.cast<UserProfileModel?>().firstWhere(
-            (candidate) => candidate?.role == 'owner',
-            orElse: () => null,
-          );
-      owner ??= await backendService.registerUser(
-        firebaseUid: 'flutter-local-owner',
-        name: 'Follo Cart Demo Owner',
-        role: 'owner',
-      );
-      loadedUsers = await backendService.fetchUsers();
-      final records = await backendService.fetchFoodCarts();
-      final follows = await backendService.fetchFollows(user.id);
-      final followIds = follows.map((follow) => follow.cartId).toSet();
+      if (loadGeneration != _backendLoadGeneration) return;
+      UserProfileModel? user;
+      var loadedRole = UserRole.customer;
+      var loadedUsers = <UserProfileModel>[];
+      var loadedOwnedCarts = <FoodCart>[];
+      var loadedNotifications = <NotificationModel>[];
+      var loadedFollowIds = <String>{};
+      String? loadedAccountError;
+
+      if (_hasVerifiedFirebaseUser) {
+        try {
+          user = await backendService.fetchCurrentUser();
+          loadedRole = _roleFromString(user.role);
+          if (loadedRole == UserRole.admin) {
+            loadedUsers = await backendService.fetchUsers();
+          }
+          if (loadedRole == UserRole.owner || loadedRole == UserRole.admin) {
+            final ownerRecords = await backendService.fetchMyCarts();
+            loadedOwnedCarts = ownerRecords.indexed.map((entry) {
+              final (index, record) = entry;
+              return _toMapCart(
+                record,
+                index,
+                const Color(0xFFE66D45),
+                '',
+                false,
+              );
+            }).toList();
+          }
+          final follows = await backendService.fetchFollows(user.id);
+          loadedFollowIds = follows.map((follow) => follow.cartId).toSet();
+          loadedNotifications =
+              await backendService.fetchNotifications(user.id);
+        } catch (error) {
+          loadedAccountError = error.toString();
+        }
+      }
+
       const colors = [
         Color(0xFFE66D45),
         Color(0xFF3C8B70),
@@ -169,36 +224,76 @@ class _ShellState extends State<Shell> {
         final (index, record) = entry;
         final cartLocation = latlng.LatLng(record.latitude, record.longitude);
         final kilometers = distance.as(
-            latlng.LengthUnit.Kilometer, defaultMapCenter, cartLocation);
+            latlng.LengthUnit.Kilometer, userLocation, cartLocation);
         return _toMapCart(
           record,
           index,
           colors[index % colors.length],
-          '${kilometers.toStringAsFixed(1)} km away',
-          followIds.contains(record.id),
+          hasDeviceLocation
+              ? '${kilometers.toStringAsFixed(1)} km away'
+              : '${kilometers.toStringAsFixed(1)} km from map center',
+          loadedFollowIds.contains(record.id),
         );
       }).toList();
-      final loadedNotifications =
-          await backendService.fetchNotifications(user.id);
-      if (!mounted) return;
+      if (!mounted || loadGeneration != _backendLoadGeneration) return;
       setState(() {
-        prototypeUserId = user.id;
-        prototypeOwnerId = owner?.id;
+        prototypeUserId = user?.id;
+        prototypeOwnerId = user != null &&
+                (loadedRole == UserRole.owner || loadedRole == UserRole.admin)
+            ? user.id
+            : null;
+        currentProfile = user;
+        role = loadedRole;
+        accountError = loadedAccountError;
         carts
           ..clear()
           ..addAll(loadedCarts);
+        ownedCarts = loadedOwnedCarts;
         users = loadedUsers;
         notifications = loadedNotifications;
         isLoadingCarts = false;
       });
     } catch (error) {
-      if (!mounted) return;
+      if (!mounted || loadGeneration != _backendLoadGeneration) return;
       setState(() {
         backendError = error.toString();
         isLoadingCarts = false;
       });
     }
   }
+
+  Future<bool> _openSignIn() async {
+    if (Firebase.apps.isEmpty) {
+      if (!mounted) return false;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'Browsing is available. Configure Firebase to sign in and follow carts.',
+          ),
+        ),
+      );
+      return false;
+    }
+    final signedIn = await Navigator.of(context).push<bool>(
+      MaterialPageRoute(
+        builder: (routeContext) => SignInScreen(
+          onSignedIn: () => Navigator.of(routeContext).pop(true),
+        ),
+      ),
+    );
+    if (signedIn == true && mounted) {
+      await _loadBackendData();
+      return prototypeUserId != null;
+    }
+    return false;
+  }
+
+  UserRole _roleFromString(String value) => switch (value) {
+        'customer' => UserRole.customer,
+        'owner' => UserRole.owner,
+        'admin' => UserRole.admin,
+        _ => throw FormatException('Unsupported account role: $value'),
+      };
 
   FoodCart _toMapCart(
     FoodCartModel record,
@@ -226,6 +321,7 @@ class _ShellState extends State<Shell> {
   }
 
   Future<void> _toggleFollow(FoodCart cart) async {
+    if (prototypeUserId == null && !await _openSignIn()) return;
     final userId = prototypeUserId;
     if (userId == null || pendingCartActions.contains(cart.id)) return;
     final wasFollowed = cart.isFollowed;
@@ -262,7 +358,12 @@ class _ShellState extends State<Shell> {
         schedule: cart.schedule,
       );
       if (!mounted) return;
-      setState(() => cart.isOpen = isOpen);
+      setState(() {
+        cart.isOpen = isOpen;
+        for (final item in [...carts, ...ownedCarts]) {
+          if (item.id == cart.id) item.isOpen = isOpen;
+        }
+      });
     } catch (error) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
@@ -282,12 +383,10 @@ class _ShellState extends State<Shell> {
     required double latitude,
     required double longitude,
   }) async {
-    final ownerId = prototypeOwnerId;
-    if (ownerId == null) {
-      throw StateError('The local demo owner has not loaded yet.');
+    if (prototypeOwnerId == null) {
+      throw StateError('An approved cart-owner account is required.');
     }
-    final record = await backendService.createCart(
-      ownerId: ownerId,
+    await backendService.createCart(
       name: name,
       category: category,
       locationLabel: location,
@@ -297,27 +396,21 @@ class _ShellState extends State<Shell> {
       longitude: longitude,
     );
     if (!mounted) return;
-    setState(() {
-      carts.insert(
-        0,
-        _toMapCart(
-          record,
-          0,
-          const Color(0xFFE66D45),
-          '0.0 km away',
-          false,
-        ),
-      );
-      selectedCart = carts.first;
-    });
+    await _loadBackendData();
     mapController.move(latlng.LatLng(latitude, longitude), defaultMapZoom);
   }
 
   Future<void> _showCreateCartForm() async {
+    if (prototypeUserId == null && !await _openSignIn()) return;
+    if (!mounted) return;
     final ownerId = prototypeOwnerId;
     if (ownerId == null) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('The demo cart owner is still loading.')),
+        const SnackBar(
+          content: Text(
+            'Your account needs cart-owner approval before you can publish a cart.',
+          ),
+        ),
       );
       return;
     }
@@ -500,9 +593,15 @@ class _ShellState extends State<Shell> {
     };
   }
 
-  Future<void> _blockUser(UserProfileModel user) async {
+  Future<void> _setUserBlocked(
+    UserProfileModel user,
+    bool isBlocked,
+  ) async {
     try {
-      await backendService.blockUser(userId: user.id);
+      await backendService.setUserBlocked(
+        userId: user.id,
+        isBlocked: isBlocked,
+      );
       if (!mounted) return;
       setState(() {
         users = users
@@ -513,7 +612,7 @@ class _ShellState extends State<Shell> {
                       name: item.name,
                       role: item.role,
                       isGuest: item.isGuest,
-                      isBlocked: true,
+                      isBlocked: isBlocked,
                       createdAt: item.createdAt,
                     )
                   : item,
@@ -523,7 +622,38 @@ class _ShellState extends State<Shell> {
     } catch (error) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Could not block user: $error')),
+        SnackBar(content: Text('Could not update user status: $error')),
+      );
+    }
+  }
+
+  Future<void> _setUserRole(
+    UserProfileModel user,
+    String newRole,
+  ) async {
+    try {
+      await backendService.setUserRole(userId: user.id, role: newRole);
+      if (!mounted) return;
+      setState(() {
+        users = users
+            .map(
+              (item) => item.id == user.id
+                  ? UserProfileModel(
+                      id: item.id,
+                      name: item.name,
+                      role: newRole,
+                      isGuest: item.isGuest,
+                      isBlocked: item.isBlocked,
+                      createdAt: item.createdAt,
+                    )
+                  : item,
+            )
+            .toList();
+      });
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Could not change user role: $error')),
       );
     }
   }
@@ -552,10 +682,12 @@ class _ShellState extends State<Shell> {
 
       setState(() {
         userLocation = latlng.LatLng(position.latitude, position.longitude);
+        hasDeviceLocation = true;
         isLocatingUser = false;
         locationError = null;
       });
       mapController.move(userLocation, defaultMapZoom);
+      await _loadBackendData();
     } catch (error) {
       if (!mounted) return;
       setState(() {
@@ -619,7 +751,12 @@ class _ShellState extends State<Shell> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text('Good morning, Maya',
+                    Text(
+                        currentProfile?.name ??
+                            (Firebase.apps.isNotEmpty
+                                ? FirebaseAuth.instance.currentUser?.displayName
+                                : null) ??
+                            'Welcome',
                         style: TextStyle(
                             color: Colors.grey.shade600,
                             fontSize: 13,
@@ -663,8 +800,11 @@ class _ShellState extends State<Shell> {
           padding: const EdgeInsets.symmetric(horizontal: 20),
           child: Row(
             children: [
-              const Text('Near you now',
-                  style: TextStyle(fontWeight: FontWeight.w800, fontSize: 17)),
+              Text(
+                hasDeviceLocation ? 'Near you now' : 'Carts around the map',
+                style:
+                    const TextStyle(fontWeight: FontWeight.w800, fontSize: 17),
+              ),
               const Spacer(),
               Text('${carts.length} carts',
                   style: TextStyle(
@@ -717,7 +857,10 @@ class _ShellState extends State<Shell> {
         Positioned(
             top: 18,
             left: 18,
-            child: _mapPill(Icons.layers_outlined, 'Inage-Kaigan')),
+            child: _mapPill(
+              Icons.layers_outlined,
+              hasDeviceLocation ? 'Near your location' : 'Inage-Kaigan area',
+            )),
         if (isLocatingUser)
           Positioned(
               top: 70,
@@ -979,10 +1122,31 @@ class _ShellState extends State<Shell> {
     return _simplePage(
         'Your followed carts',
         'Get notified when they move, open, or update their schedule.',
-        followed.map((cart) => _cartListTile(cart)).toList());
+        prototypeUserId == null
+            ? [
+                const Text('Sign in to follow carts and see them here.'),
+                const SizedBox(height: 12),
+                FilledButton(
+                  onPressed: _openSignIn,
+                  child: const Text('Sign in or create an account'),
+                ),
+              ]
+            : followed.map((cart) => _cartListTile(cart)).toList());
   }
 
   Widget _buildUpdates() {
+    if (prototypeUserId == null) {
+      return _simplePage(
+        'Latest updates',
+        'Sign in to see updates from carts you follow.',
+        [
+          FilledButton(
+            onPressed: _openSignIn,
+            child: const Text('Sign in or create an account'),
+          ),
+        ],
+      );
+    }
     if (notifications.isEmpty) {
       return _simplePage(
         'Latest updates',
@@ -1015,7 +1179,7 @@ class _ShellState extends State<Shell> {
   Widget _buildProfile() {
     return _simplePage('Your profile', 'Manage your Follo Cart experience.', [
       const SizedBox(height: 4),
-      _roleSwitcher(),
+      _accountPanel(),
       const SizedBox(height: 12),
       _roleWorkspace(),
       const SizedBox(height: 12),
@@ -1106,35 +1270,62 @@ class _ShellState extends State<Shell> {
         ]));
   }
 
-  Widget _roleSwitcher() {
+  Widget _accountPanel() {
+    final user =
+        Firebase.apps.isEmpty ? null : FirebaseAuth.instance.currentUser;
+    final signedIn = prototypeUserId != null;
     return Container(
-        padding: const EdgeInsets.all(14),
-        decoration: BoxDecoration(
-            color: const Color(0xFF176B5B),
-            borderRadius: BorderRadius.circular(20)),
-        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          const Text('Preview role',
-              style: TextStyle(
-                  color: Colors.white70,
-                  fontSize: 12,
-                  fontWeight: FontWeight.w700)),
-          const SizedBox(height: 10),
-          Wrap(
-              spacing: 8,
-              children: UserRole.values
-                  .map((item) => ChoiceChip(
-                      label: Text(_roleLabel(item)),
-                      selected: role == item,
-                      onSelected: (_) => setState(() => role = item),
-                      selectedColor: Colors.white,
-                      backgroundColor: Colors.white24,
-                      labelStyle: TextStyle(
-                          color: role == item
-                              ? const Color(0xFF176B5B)
-                              : Colors.white,
-                          fontWeight: FontWeight.w700)))
-                  .toList())
-        ]));
+      padding: const EdgeInsets.all(15),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: const Color(0xFFE3E7E1)),
+      ),
+      child: Row(
+        children: [
+          const CircleAvatar(child: Icon(Icons.person_outline)),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  signedIn
+                      ? user?.displayName ?? user?.email ?? 'Signed-in user'
+                      : 'Browsing as a guest',
+                  style: const TextStyle(fontWeight: FontWeight.w800),
+                ),
+                const SizedBox(height: 3),
+                Text(
+                    signedIn
+                        ? '${_roleLabel(role)} account'
+                        : 'Sign in to follow carts and manage an account.',
+                    style:
+                        TextStyle(color: Colors.grey.shade600, fontSize: 12)),
+                if (accountError != null)
+                  Text(
+                    'Account data could not load: $accountError',
+                    style: const TextStyle(color: Colors.red, fontSize: 11),
+                  ),
+              ],
+            ),
+          ),
+          if (signedIn)
+            IconButton(
+              tooltip: 'Sign out',
+              onPressed: () async {
+                await FirebaseAuth.instance.signOut();
+              },
+              icon: const Icon(Icons.logout_rounded),
+            )
+          else
+            FilledButton.tonal(
+              onPressed: _openSignIn,
+              child: const Text('Sign in'),
+            ),
+        ],
+      ),
+    );
   }
 
   Widget _roleWorkspace() {
@@ -1153,7 +1344,7 @@ class _ShellState extends State<Shell> {
           _workspaceCard(
             Icons.storefront_outlined,
             'Cart owner studio',
-            'Update your live location, set open hours, and publish your next stop.',
+            'Manage your carts, opening status, and schedule.',
             'Open owner studio',
           ),
           const SizedBox(height: 12),
@@ -1236,9 +1427,7 @@ class _ShellState extends State<Shell> {
   }
 
   Widget _ownerWorkspace() {
-    final ownerCarts =
-        carts.where((cart) => cart.ownerId == prototypeOwnerId).toList();
-    final cart = ownerCarts.isEmpty ? null : ownerCarts.first;
+    final cart = ownedCarts.isEmpty ? null : ownedCarts.first;
     return Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         mainAxisSize: MainAxisSize.min,
@@ -1303,7 +1492,7 @@ class _ShellState extends State<Shell> {
           const Text('Admin console',
               style: TextStyle(fontSize: 22, fontWeight: FontWeight.w800)),
           const SizedBox(height: 5),
-          Text('Local prototype users · ${users.length}',
+          Text('Accounts · ${users.length}',
               style: TextStyle(color: Colors.grey.shade600)),
           const SizedBox(height: 18),
           if (users.isEmpty)
@@ -1319,17 +1508,47 @@ class _ShellState extends State<Shell> {
                 title: Text(user.name,
                     style: const TextStyle(fontWeight: FontWeight.w700)),
                 subtitle: Text(user.isBlocked ? 'Blocked' : user.role),
-                trailing: user.isBlocked
-                    ? const Icon(Icons.check_circle, color: Color(0xFF3C8B70))
-                    : TextButton(
-                        onPressed: () => _blockUser(user),
-                        child: const Text('Block'),
-                      ),
+                trailing: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    DropdownButton<String>(
+                      value: user.role,
+                      underline: const SizedBox.shrink(),
+                      items: const [
+                        DropdownMenuItem(
+                          value: 'customer',
+                          child: Text('Customer'),
+                        ),
+                        DropdownMenuItem(
+                          value: 'owner',
+                          child: Text('Cart owner'),
+                        ),
+                        DropdownMenuItem(
+                          value: 'admin',
+                          child: Text('Admin'),
+                        ),
+                      ],
+                      onChanged: user.id == prototypeUserId
+                          ? null
+                          : (value) {
+                              if (value != null && value != user.role) {
+                                _setUserRole(user, value);
+                              }
+                            },
+                    ),
+                    TextButton(
+                      onPressed: user.id == prototypeUserId
+                          ? null
+                          : () => _setUserBlocked(user, !user.isBlocked),
+                      child: Text(user.isBlocked ? 'Unblock' : 'Block'),
+                    ),
+                  ],
+                ),
               ),
             ),
           const SizedBox(height: 8),
           const Text(
-              'These unauthenticated moderation controls are for local prototyping only.',
+              'Role changes and account moderation require an authenticated admin account.',
               style: TextStyle(fontSize: 12, height: 1.4)),
         ]);
   }

@@ -21,6 +21,12 @@ FastAPI REST API -------- Jinja admin dashboard
 
 Flutter supports Firebase email/password and Google sign-in. ID tokens accompany protected API calls. New users are created as customers; role changes are restricted to admins. Carts can be read publicly, while create/update, account, follows, notifications, and moderation routes enforce authenticated identity, database role, or cart ownership. The app configures the API using `--dart-define=API_BASE_URL=...`; Android emulators use `http://10.0.2.2:18000`. Flutter models use camelCase while the API/database use snake_case. Location labels and featured state are not stored, and server-generated UUIDs replace the old demo IDs.
 
+The Flutter app supports guest map browsing; Firebase sign-in is required only
+for account-specific actions. `GET /api/v1/carts` is public. Pass `latitude`,
+`longitude`, and optional `radius_km` (default 5 km, maximum 50 km) to return
+nearby carts ordered by distance. The owner-only `GET /api/v1/carts/mine`
+returns all carts owned by the signed-in account, independent of nearby radius.
+
 ## 2. Prerequisites
 
 Install Git, Python 3.12 or newer, VS Code with the Python extension, and Docker with Compose v2 (Docker Desktop on Windows). A MySQL client is optional. Firebase Auth is required for sign-in and protected API operations.

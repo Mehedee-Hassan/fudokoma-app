@@ -12,30 +12,42 @@ class BackendService {
 
   void close() => _apiClient.close();
 
-  Future<UserProfileModel> registerUser({
-    required String firebaseUid,
-    required String name,
-    String? email,
-    String role = 'customer',
-  }) async {
-    final response = await _apiClient.post('users', {
-      'firebase_uid': firebaseUid,
-      'name': name,
-      'email': email,
-      'role': role,
-    });
+  Future<UserProfileModel> fetchCurrentUser() async {
+    final response = await _apiClient.get('users/me');
     return _userFromResponse(response);
   }
 
-  Future<List<FoodCartModel>> fetchFoodCarts() async {
-    final response = await _apiClient.get('carts');
+  Future<List<FoodCartModel>> fetchFoodCarts({
+    double? latitude,
+    double? longitude,
+    double radiusKm = 5,
+  }) async {
+    if ((latitude == null) != (longitude == null)) {
+      throw ArgumentError('Latitude and longitude must be provided together.');
+    }
+    final query = latitude == null
+        ? ''
+        : '?${Uri(
+            queryParameters: {
+              'latitude': latitude.toString(),
+              'longitude': longitude!.toString(),
+              'radius_km': radiusKm.toString(),
+            },
+          ).query}';
+    final response = await _apiClient.get('carts$query');
+    return _asMapList(response)
+        .map((map) => FoodCartModel.fromMap(map, map['id'] as String))
+        .toList();
+  }
+
+  Future<List<FoodCartModel>> fetchMyCarts() async {
+    final response = await _apiClient.get('carts/mine');
     return _asMapList(response)
         .map((map) => FoodCartModel.fromMap(map, map['id'] as String))
         .toList();
   }
 
   Future<FoodCartModel> createCart({
-    required String ownerId,
     required String name,
     required String category,
     required String locationLabel,
@@ -45,7 +57,6 @@ class BackendService {
     required double longitude,
   }) async {
     final response = await _apiClient.post('carts', {
-      'owner_id': ownerId,
       'name': name,
       'description': locationLabel,
       'category': category,
@@ -96,8 +107,18 @@ class BackendService {
     await _apiClient.delete('users/$userId/follows/$cartId');
   }
 
-  Future<void> blockUser({required String userId}) async {
-    await _apiClient.patch('users/$userId', {'is_blocked': true});
+  Future<void> setUserBlocked({
+    required String userId,
+    required bool isBlocked,
+  }) async {
+    await _apiClient.patch('users/$userId', {'is_blocked': isBlocked});
+  }
+
+  Future<void> setUserRole({
+    required String userId,
+    required String role,
+  }) async {
+    await _apiClient.patch('users/$userId', {'role': role});
   }
 
   Future<List<NotificationModel>> fetchNotifications(String userId) async {

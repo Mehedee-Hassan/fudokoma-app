@@ -43,6 +43,25 @@ void main() {
     );
   });
 
+  test('sends a Firebase bearer token when one is available', () async {
+    http.BaseRequest? capturedRequest;
+    final client = ApiClient(
+      baseUri: Uri.parse('http://localhost:18000'),
+      tokenProvider: () async => 'firebase-id-token',
+      client: _CallbackClient((request) async {
+        capturedRequest = request;
+        return _response(200, '{}');
+      }),
+    );
+
+    await client.get('users/me');
+
+    expect(
+      capturedRequest?.headers['Authorization'],
+      'Bearer firebase-id-token',
+    );
+  });
+
   test('creates a cart with backend field names', () async {
     http.BaseRequest? capturedRequest;
     final service = BackendService(
@@ -65,7 +84,6 @@ void main() {
     addTearDown(service.close);
 
     final cart = await service.createCart(
-      ownerId: 'owner-1',
       name: 'Inage Eats',
       category: 'Street food',
       locationLabel: 'Near Inage-Kaigan Station',
@@ -78,11 +96,41 @@ void main() {
         as Map<String, dynamic>;
 
     expect(capturedRequest?.url.path, '/api/v1/carts');
-    expect(payload['owner_id'], 'owner-1');
+    expect(payload.containsKey('owner_id'), isFalse);
     expect(payload['description'], 'Near Inage-Kaigan Station');
     expect(payload['latitude'], 35.6327);
     expect(payload['longitude'], 140.0908);
     expect(cart.id, 'cart-1');
+  });
+
+  test('requests carts within the supplied device-location radius', () async {
+    http.BaseRequest? capturedRequest;
+    final service = BackendService(
+      apiClient: ApiClient(
+        baseUri: Uri.parse('https://api.example.com'),
+        client: _CallbackClient((request) async {
+          capturedRequest = request;
+          return _response(200, '[]');
+        }),
+      ),
+    );
+    addTearDown(service.close);
+
+    await service.fetchFoodCarts(
+      latitude: 35.6327,
+      longitude: 140.0908,
+      radiusKm: 5,
+    );
+
+    expect(
+      capturedRequest?.url.path,
+      '/api/v1/carts',
+    );
+    expect(capturedRequest?.url.queryParameters, {
+      'latitude': '35.6327',
+      'longitude': '140.0908',
+      'radius_km': '5.0',
+    });
   });
 }
 
