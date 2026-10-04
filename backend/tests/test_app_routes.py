@@ -4,10 +4,11 @@ from types import SimpleNamespace
 from uuid import uuid4
 
 import pytest
+from firebase_admin import auth
 from fastapi.testclient import TestClient
 from pydantic import ValidationError
 
-from app.api.deps import get_session
+from app.api.deps import get_current_user, get_session
 from app.api.routes.carts import CartUpdate
 from app.api.routes.users import UserUpdate
 from app.core.config import Settings
@@ -53,6 +54,9 @@ class FakeSession:
         entity = statement.column_descriptions[0]["entity"]
         return FakeResult([self.user] if entity.__name__ == "User" else [self.cart])
 
+    async def scalar(self, statement):
+        return self.user
+
     async def get(self, model, user_id):
         return self.user if user_id == self.user.id else None
 
@@ -60,25 +64,42 @@ class FakeSession:
         return None
 
 
-def test_unauthenticated_prototype_routes_are_disabled_in_production():
+def test_production_requires_authenticated_api_and_admin_session(
+    monkeypatch,
+    tmp_path,
+):
+    credential_file = tmp_path / "firebase.json"
+    credential_file.write_text("{}", encoding="utf-8")
+    monkeypatch.setattr(
+        "app.main.firebase_admin.initialize_app",
+        lambda *args, **kwargs: SimpleNamespace(),
+    )
+    monkeypatch.setattr(
+        "app.main.firebase_admin.credentials.Certificate",
+        lambda path: object(),
+    )
+    monkeypatch.setattr(
+        "app.main.firebase_admin.delete_app",
+        lambda app: None,
+    )
     settings = Settings(
         _env_file=None,
         app_env="production",
         admin_session_secret="s" * 40,
         mysql_password="test",
+        firebase_project_id="test-project",
+        firebase_credentials_path=str(credential_file),
+        firebase_web_api_key="web-api-key",
+        firebase_auth_domain="test-project.firebaseapp.com",
+        firebase_web_app_id="web-app-id",
         trusted_hosts=["testserver"],
     )
-    with TestClient(create_app(settings)) as client:
-        assert client.get("/api/v1/carts").status_code == 403
-        assert client.get("/api/v1/users").status_code == 403
-        assert client.post(
-            "/api/v1/users",
-            json={"firebase_uid": "uid", "name": "Test user"},
-        ).status_code == 403
-        assert client.get("/admin").status_code == 403
+    with TestClient(create_app(settings), follow_redirects=False) as client:
+        assert client.get("/api/v1/users").status_code == 401
+        assert client.get("/admin").status_code == 303
         assert client.post(
             f"/admin/users/{uuid4()}/block?blocked=true"
-        ).status_code == 403
+        ).status_code == 303
 
 
 def test_local_admin_dashboard_lists_users_and_carts():
@@ -115,7 +136,7 @@ def test_local_admin_dashboard_lists_users_and_carts():
                 r'name="csrf_token" value="([^"]+)"',
                 login_page.text,
             ).group(1)
-            assert "Local development dashboard" in login_page.text
+            assert "Admin username" in login_page.text
 
             invalid_login = client.post(
                 "/admin/login",
@@ -181,15 +202,320 @@ def test_local_admin_dashboard_lists_users_and_carts():
         app.dependency_overrides.clear()
 
 
+def test_production_admin_dashboard_uses_firebase_admin_accounts(
+    monkeypatch,
+    tmp_path,
+):
+    credential_file = tmp_path / "firebase.json"
+    credential_file.write_text("{}", encoding="utf-8")
+    monkeypatch.setattr(
+        "app.main.firebase_admin.initialize_app",
+        lambda *args, **kwargs: SimpleNamespace(),
+    )
+    monkeypatch.setattr(
+        "app.main.firebase_admin.credentials.Certificate",
+        lambda path: object(),
+    )
+    monkeypatch.setattr(
+        "app.main.firebase_admin.delete_app",
+        lambda app: None,
+    )
+
+    async def verify_token(request, token):
+        return {
+            "uid": "local-test-user",
+            "email": "test@example.com",
+            "email_verified": True,
+        }
+
+    monkeypatch.setattr(
+        "app.admin.routes.verify_firebase_id_token",
+        verify_token,
+    )
+    app = create_app(
+        Settings(
+            _env_file=None,
+            app_env="production",
+            admin_session_secret="s" * 40,
+            mysql_password="test",
+            firebase_project_id="test-project",
+            firebase_credentials_path=str(credential_file),
+            firebase_web_api_key="web-api-key",
+            firebase_auth_domain="test-project.firebaseapp.com",
+            firebase_web_app_id="web-app-id",
+            admin_username="emergency-admin",
+            admin_password="a" * 32,
+            trusted_hosts=["testserver"],
+        )
+    )
+    fake_session = FakeSession()
+
+    async def override_session():
+        yield fake_session
+
+    app.dependency_overrides[get_session] = override_session
+    try:
+        with TestClient(
+            app,
+            base_url="https://testserver",
+            follow_redirects=False,
+        ) as client:
+            login_page = client.get("/admin/login")
+            assert login_page.status_code == 200
+            csrf_token = re.search(
+                r'id="csrf-token" type="hidden" value="([^"]+)"',
+                login_page.text,
+            ).group(1)
+
+            denied = client.post(
+                "/admin/session",
+                json={"id_token": "verified-customer-token", "csrf_token": csrf_token},
+            )
+            assert denied.status_code == 403
+
+            fake_session.user.role = "admin"
+            authenticated = client.post(
+                "/admin/session",
+                json={"id_token": "verified-admin-token", "csrf_token": csrf_token},
+            )
+            assert authenticated.status_code == 204
+            dashboard = client.get("/admin")
+            assert dashboard.status_code == 200
+            assert "Admin dashboard" in dashboard.text
+            assert "Inage Eats" in dashboard.text
+            dashboard_csrf = re.search(
+                r'name="csrf_token" value="([^"]+)"',
+                dashboard.text,
+            ).group(1)
+            logout = client.post(
+                "/admin/logout",
+                data={"csrf_token": dashboard_csrf},
+            )
+            assert logout.status_code == 303
+
+            password_login_page = client.get("/admin/login")
+            password_csrf = re.search(
+                r'name="csrf_token" value="([^"]+)"',
+                password_login_page.text,
+            ).group(1)
+            password_login = client.post(
+                "/admin/login",
+                data={
+                    "username": "emergency-admin",
+                    "password": "a" * 32,
+                    "csrf_token": password_csrf,
+                },
+            )
+            assert password_login.status_code == 303
+            assert client.get("/admin").status_code == 200
+    finally:
+        app.dependency_overrides.clear()
+
+
 def test_admin_login_requires_credentials_to_be_configured():
     with TestClient(
-        create_app(Settings(_env_file=None)),
+        create_app(
+            Settings(
+                _env_file=None,
+                admin_username="",
+                admin_password=None,
+            )
+        ),
         follow_redirects=False,
     ) as client:
         login_page = client.get("/admin/login")
         assert login_page.status_code == 200
-        assert "Admin login is not configured" in login_page.text
+        assert "Sign in with username and password" not in login_page.text
         assert client.get("/admin").status_code == 303
+
+
+def test_authenticated_api_enforces_account_and_role_boundaries():
+    app = create_app(Settings(_env_file=None))
+    fake_user = FakeSession().user
+
+    async def override_current_user():
+        return fake_user
+
+    app.dependency_overrides[get_current_user] = override_current_user
+    try:
+        with TestClient(app) as client:
+            assert client.get("/api/v1/users/me").status_code == 200
+            assert client.get("/api/v1/users").status_code == 403
+            assert client.post(
+                "/api/v1/carts",
+                json={
+                    "name": "Unauthorized cart",
+                    "category": "Street food",
+                    "is_open": True,
+                    "latitude": 35.6327,
+                    "longitude": 140.0908,
+                    "schedule": "11 AM - 8 PM",
+                },
+            ).status_code == 403
+            assert client.post(
+                "/api/v1/carts",
+                json={
+                    "owner_id": str(uuid4()),
+                    "name": "Spoofed cart",
+                    "category": "Street food",
+                    "latitude": 35.6327,
+                    "longitude": 140.0908,
+                    "schedule": "11 AM - 8 PM",
+                },
+            ).status_code == 422
+    finally:
+        app.dependency_overrides.clear()
+
+
+def test_public_carts_can_be_filtered_by_device_location():
+    from app.api.routes.carts import router
+
+    nearby_cart = SimpleNamespace(
+        id=uuid4(),
+        owner_id=uuid4(),
+        name="Nearby cart",
+        description="Nearby",
+        category="Street food",
+        is_open=True,
+        latitude=35.6327,
+        longitude=140.0908,
+        schedule="11 AM - 8 PM",
+        image_url=None,
+        updated_at=datetime(2026, 10, 2),
+    )
+    distant_cart = SimpleNamespace(
+        id=uuid4(),
+        owner_id=uuid4(),
+        name="Distant cart",
+        description="Distant",
+        category="Street food",
+        is_open=True,
+        latitude=35.72,
+        longitude=140.09,
+        schedule="11 AM - 8 PM",
+        image_url=None,
+        updated_at=datetime(2026, 10, 2),
+    )
+
+    class CartSession:
+        async def execute(self, statement):
+            return FakeResult([(nearby_cart, 2), (distant_cart, 1)])
+
+    app = create_app(Settings(_env_file=None))
+
+    async def override_session():
+        yield CartSession()
+
+    app.dependency_overrides[get_session] = override_session
+    try:
+        with TestClient(app) as client:
+            public_response = client.get("/api/v1/carts")
+            assert public_response.status_code == 200
+            assert len(public_response.json()) == 2
+
+            nearby_response = client.get(
+                "/api/v1/carts",
+                params={
+                    "latitude": 35.6327,
+                    "longitude": 140.0908,
+                    "radius_km": 5,
+                },
+            )
+            assert nearby_response.status_code == 200
+            assert [cart["name"] for cart in nearby_response.json()] == [
+                "Nearby cart"
+            ]
+
+            incomplete_location = client.get(
+                "/api/v1/carts",
+                params={"latitude": 35.6327},
+            )
+            assert incomplete_location.status_code == 422
+    finally:
+        app.dependency_overrides.clear()
+
+
+def test_only_cart_owners_can_list_their_managed_carts():
+    app = create_app(Settings(_env_file=None))
+    fake_user = FakeSession().user
+
+    async def override_current_user():
+        return fake_user
+
+    class CartSession:
+        async def execute(self, statement):
+            cart = SimpleNamespace(
+                id=uuid4(),
+                owner_id=fake_user.id,
+                name="Owned cart",
+                description="My cart",
+                category="Street food",
+                is_open=True,
+                latitude=35.6327,
+                longitude=140.0908,
+                schedule="11 AM - 8 PM",
+                image_url=None,
+                updated_at=datetime(2026, 10, 2),
+            )
+            return FakeResult([(cart, 0)])
+
+    async def override_session():
+        yield CartSession()
+
+    app.dependency_overrides[get_current_user] = override_current_user
+    app.dependency_overrides[get_session] = override_session
+    try:
+        with TestClient(app) as client:
+            assert client.get("/api/v1/carts/mine").status_code == 403
+            fake_user.role = "owner"
+            response = client.get("/api/v1/carts/mine")
+            assert response.status_code == 200
+            assert response.json()[0]["name"] == "Owned cart"
+    finally:
+        app.dependency_overrides.clear()
+
+
+def test_user_api_requires_a_bearer_token():
+    with TestClient(create_app(Settings(_env_file=None))) as client:
+        response = client.get("/api/v1/users/me")
+    assert response.status_code == 401
+    assert response.headers["www-authenticate"] == "Bearer"
+
+
+def test_invalid_firebase_token_is_rejected(monkeypatch, tmp_path):
+    credential_file = tmp_path / "firebase.json"
+    credential_file.write_text("{}", encoding="utf-8")
+    monkeypatch.setattr(
+        "app.main.firebase_admin.initialize_app",
+        lambda *args, **kwargs: SimpleNamespace(),
+    )
+    monkeypatch.setattr(
+        "app.main.firebase_admin.credentials.Certificate",
+        lambda path: object(),
+    )
+    monkeypatch.setattr(
+        "app.main.firebase_admin.delete_app",
+        lambda app: None,
+    )
+
+    def reject_token(*args, **kwargs):
+        raise auth.InvalidIdTokenError("Invalid test token")
+
+    monkeypatch.setattr("app.api.deps.auth.verify_id_token", reject_token)
+    app = create_app(
+        Settings(
+            _env_file=None,
+            firebase_project_id="test-project",
+            firebase_credentials_path=str(credential_file),
+        )
+    )
+    with TestClient(app) as client:
+        response = client.get(
+            "/api/v1/users/me",
+            headers={"Authorization": "Bearer invalid-token"},
+        )
+    assert response.status_code == 401
+    assert response.json()["detail"] == "Invalid or expired Firebase ID token"
 
 
 def test_local_cors_allows_follow_put_requests():

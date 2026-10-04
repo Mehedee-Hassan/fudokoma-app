@@ -1,16 +1,23 @@
 import 'dart:convert';
 
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:firebase_core/firebase_core.dart';
 import 'package:http/http.dart' as http;
 
 import '../config/api_config.dart';
 
 class ApiClient {
-  ApiClient({http.Client? client, Uri? baseUri})
-      : _client = client ?? http.Client(),
-        _baseUri = baseUri ?? Uri.parse(ApiConfig.baseUrl);
+  ApiClient({
+    http.Client? client,
+    Uri? baseUri,
+    Future<String?> Function()? tokenProvider,
+  })  : _client = client ?? http.Client(),
+        _baseUri = baseUri ?? Uri.parse(ApiConfig.baseUrl),
+        _tokenProvider = tokenProvider ?? _firebaseIdToken;
 
   final http.Client _client;
   final Uri _baseUri;
+  final Future<String?> Function() _tokenProvider;
 
   void close() => _client.close();
 
@@ -36,6 +43,10 @@ class ApiClient {
     final uri = _baseUri.resolve('/api/v1/$normalizedPath');
     final request = http.Request(method, uri)
       ..headers['Accept'] = 'application/json';
+    final token = await _tokenProvider();
+    if (token != null && token.isNotEmpty) {
+      request.headers['Authorization'] = 'Bearer $token';
+    }
     if (body != null) {
       request.headers['Content-Type'] = 'application/json';
       request.body = jsonEncode(body);
@@ -52,7 +63,8 @@ class ApiClient {
     try {
       return jsonDecode(response.body);
     } on FormatException {
-      throw ApiException(response.statusCode, 'The backend returned invalid JSON.');
+      throw ApiException(
+          response.statusCode, 'The backend returned invalid JSON.');
     }
   }
 
@@ -66,6 +78,11 @@ class ApiClient {
       // Use the status code when the backend response is not JSON.
     }
     return 'Backend request failed with HTTP ${response.statusCode}.';
+  }
+
+  static Future<String?> _firebaseIdToken() async {
+    if (Firebase.apps.isEmpty) return null;
+    return FirebaseAuth.instance.currentUser?.getIdToken();
   }
 }
 
